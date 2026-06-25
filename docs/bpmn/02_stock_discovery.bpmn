@@ -1,0 +1,369 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<definitions xmlns="http://www.omg.org/spec/BPMN/20100524/MODEL"
+             xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+             xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI"
+             xmlns:omgdc="http://www.omg.org/spec/DD/20100524/DC"
+             xmlns:omgdi="http://www.omg.org/spec/DD/20100524/DI"
+             targetNamespace="http://stock-conviction-app/stock-discovery"
+             id="stock_discovery">
+
+  <!-- ═══════════════════════════════════════════════════════════════
+       PROCESS: Stock Discovery & Screening
+       Maps to PRD: §7.1 — SCR-01 through SCR-08
+       ═══════════════════════════════════════════════════════════════ -->
+
+  <collaboration id="collab_discovery">
+    <participant id="pool_investor_disc" name="Investor" processRef="proc_investor_disc" />
+    <participant id="pool_disc_service" name="Discovery Service" processRef="proc_disc_service" />
+    <participant id="pool_data_disc" name="Market Data Layer" processRef="proc_data_disc" />
+
+    <messageFlow id="mf_disc_criteria" name="Screening Criteria" sourceRef="tsk_disc_set_filters" targetRef="tsk_disc_receive_criteria" />
+    <messageFlow id="mf_disc_results" name="Enriched Results" sourceRef="tsk_disc_deliver_results" targetRef="tsk_disc_browse" />
+    <messageFlow id="mf_disc_add_wl" name="Add to Watchlist Request" sourceRef="tsk_disc_add_watchlist" targetRef="tsk_disc_create_entry" />
+    <messageFlow id="mf_disc_data_req" name="Screening Data Request" sourceRef="tsk_disc_run_screen" targetRef="tsk_disc_fetch_universe" />
+    <messageFlow id="mf_disc_data_resp" name="Security Universe + Data" sourceRef="tsk_disc_return_data" targetRef="tsk_disc_score_results" />
+  </collaboration>
+
+  <!-- ── INVESTOR PROCESS ── -->
+  <process id="proc_investor_disc" name="Investor — Discovery" isExecutable="false">
+
+    <startEvent id="evt_disc_start" name="Investor Opens&#10;Discovery View">
+      <outgoing>sf_disc_start_tab</outgoing>
+    </startEvent>
+
+    <exclusiveGateway id="gw_disc_entry" name="Entry Method?">
+      <incoming>sf_disc_start_tab</incoming>
+      <outgoing>sf_disc_custom_screen</outgoing>
+      <outgoing>sf_disc_curated</outgoing>
+      <outgoing>sf_disc_manual_ticker</outgoing>
+    </exclusiveGateway>
+
+    <userTask id="tsk_disc_set_filters" name="Build Custom Screen&#10;(filters: sector, P/E, ROIC, growth, size)">
+      <incoming>sf_disc_custom_screen</incoming>
+      <outgoing>sf_disc_filters_wait</outgoing>
+    </userTask>
+
+    <userTask id="tsk_disc_select_curated" name="Select Curated&#10;Thematic Screen&#10;(e.g., AI Infrastructure)">
+      <incoming>sf_disc_curated</incoming>
+      <outgoing>sf_disc_curated_apply</outgoing>
+    </userTask>
+
+    <userTask id="tsk_disc_enter_ticker" name="Enter Ticker Directly&#10;(manual stock lookup)">
+      <incoming>sf_disc_manual_ticker</incoming>
+      <outgoing>sf_disc_ticker_add</outgoing>
+    </userTask>
+
+    <intermediateCatchEvent id="evt_disc_results_ready" name="Results Ready">
+      <incoming>sf_disc_filters_wait</incoming>
+      <outgoing>sf_disc_to_browse</outgoing>
+      <messageEventDefinition />
+    </intermediateCatchEvent>
+
+    <userTask id="tsk_disc_browse" name="Browse Results&#10;(sort by Why Now, conviction band, upside)">
+      <incoming>sf_disc_to_browse</incoming>
+      <incoming>sf_disc_curated_apply</incoming>
+      <outgoing>sf_disc_browse_select</outgoing>
+    </userTask>
+
+    <userTask id="tsk_disc_view_card" name="Open Stock Discovery Card&#10;(Why Now score, conviction band,&#10;earnings proximity, analyst consensus)">
+      <incoming>sf_disc_browse_select</incoming>
+      <outgoing>sf_disc_card_decision</outgoing>
+    </userTask>
+
+    <exclusiveGateway id="gw_disc_card_action" name="Action on Stock?">
+      <incoming>sf_disc_card_decision</incoming>
+      <outgoing>sf_disc_to_watchlist</outgoing>
+      <outgoing>sf_disc_dismiss</outgoing>
+      <outgoing>sf_disc_view_similar</outgoing>
+    </exclusiveGateway>
+
+    <userTask id="tsk_disc_add_watchlist" name="Add to Watchlist&#10;(state: Discovery)">
+      <incoming>sf_disc_to_watchlist</incoming>
+      <incoming>sf_disc_ticker_add</incoming>
+      <outgoing>sf_disc_watchlist_confirm</outgoing>
+    </userTask>
+
+    <userTask id="tsk_disc_view_similar" name="View Similar Stocks&#10;(factor-based similarity)">
+      <incoming>sf_disc_view_similar</incoming>
+      <outgoing>sf_disc_similar_browse</outgoing>
+    </userTask>
+
+    <sequenceFlow id="sf_disc_similar_browse" sourceRef="tsk_disc_view_similar" targetRef="tsk_disc_view_card" />
+
+    <intermediateCatchEvent id="evt_disc_entry_created" name="Watchlist Entry Created">
+      <incoming>sf_disc_watchlist_confirm</incoming>
+      <outgoing>sf_disc_confirm_show</outgoing>
+      <messageEventDefinition />
+    </intermediateCatchEvent>
+
+    <userTask id="tsk_disc_see_confirmation" name="See Confirmation&#10;(stock added, initial conviction shown)">
+      <incoming>sf_disc_confirm_show</incoming>
+      <outgoing>sf_disc_continue</outgoing>
+    </userTask>
+
+    <exclusiveGateway id="gw_disc_continue" name="Continue Browsing?">
+      <incoming>sf_disc_continue</incoming>
+      <outgoing>sf_disc_back_browse</outgoing>
+      <outgoing>sf_disc_go_research</outgoing>
+    </exclusiveGateway>
+
+    <endEvent id="evt_disc_dismissed" name="Stock Dismissed&#10;(removed from view)">
+      <incoming>sf_disc_dismiss</incoming>
+    </endEvent>
+
+    <endEvent id="evt_disc_to_research" name="Proceed to Research&#10;Mode">
+      <incoming>sf_disc_go_research</incoming>
+    </endEvent>
+
+    <endEvent id="evt_disc_end" name="Discovery Session&#10;Complete">
+      <incoming>sf_disc_back_browse</incoming>
+    </endEvent>
+
+    <sequenceFlow id="sf_disc_start_tab" sourceRef="evt_disc_start" targetRef="gw_disc_entry" />
+    <sequenceFlow id="sf_disc_custom_screen" sourceRef="gw_disc_entry" targetRef="tsk_disc_set_filters">
+      <conditionExpression>custom screen</conditionExpression>
+    </sequenceFlow>
+    <sequenceFlow id="sf_disc_curated" sourceRef="gw_disc_entry" targetRef="tsk_disc_select_curated">
+      <conditionExpression>curated thematic screen</conditionExpression>
+    </sequenceFlow>
+    <sequenceFlow id="sf_disc_manual_ticker" sourceRef="gw_disc_entry" targetRef="tsk_disc_enter_ticker">
+      <conditionExpression>direct ticker entry</conditionExpression>
+    </sequenceFlow>
+    <sequenceFlow id="sf_disc_filters_wait" sourceRef="tsk_disc_set_filters" targetRef="evt_disc_results_ready" />
+    <sequenceFlow id="sf_disc_to_browse" sourceRef="evt_disc_results_ready" targetRef="tsk_disc_browse" />
+    <sequenceFlow id="sf_disc_curated_apply" sourceRef="tsk_disc_select_curated" targetRef="tsk_disc_browse" />
+    <sequenceFlow id="sf_disc_browse_select" sourceRef="tsk_disc_browse" targetRef="tsk_disc_view_card" />
+    <sequenceFlow id="sf_disc_card_decision" sourceRef="tsk_disc_view_card" targetRef="gw_disc_card_action" />
+    <sequenceFlow id="sf_disc_to_watchlist" sourceRef="gw_disc_card_action" targetRef="tsk_disc_add_watchlist">
+      <conditionExpression>add to watchlist</conditionExpression>
+    </sequenceFlow>
+    <sequenceFlow id="sf_disc_dismiss" sourceRef="gw_disc_card_action" targetRef="evt_disc_dismissed">
+      <conditionExpression>dismiss stock</conditionExpression>
+    </sequenceFlow>
+    <sequenceFlow id="sf_disc_view_similar" sourceRef="gw_disc_card_action" targetRef="tsk_disc_view_similar">
+      <conditionExpression>view similar stocks</conditionExpression>
+    </sequenceFlow>
+    <sequenceFlow id="sf_disc_ticker_add" sourceRef="tsk_disc_enter_ticker" targetRef="tsk_disc_add_watchlist" />
+    <sequenceFlow id="sf_disc_watchlist_confirm" sourceRef="tsk_disc_add_watchlist" targetRef="evt_disc_entry_created" />
+    <sequenceFlow id="sf_disc_confirm_show" sourceRef="evt_disc_entry_created" targetRef="tsk_disc_see_confirmation" />
+    <sequenceFlow id="sf_disc_continue" sourceRef="tsk_disc_see_confirmation" targetRef="gw_disc_continue" />
+    <sequenceFlow id="sf_disc_back_browse" sourceRef="gw_disc_continue" targetRef="evt_disc_end">
+      <conditionExpression>continue browsing</conditionExpression>
+    </sequenceFlow>
+    <sequenceFlow id="sf_disc_go_research" sourceRef="gw_disc_continue" targetRef="evt_disc_to_research">
+      <conditionExpression>go to research</conditionExpression>
+    </sequenceFlow>
+
+  </process>
+
+  <!-- ── DISCOVERY SERVICE PROCESS ── -->
+  <process id="proc_disc_service" name="Discovery Service" isExecutable="false">
+
+    <startEvent id="evt_disc_svc_start" name="Criteria Received">
+      <outgoing>sf_disc_svc_criteria</outgoing>
+    </startEvent>
+
+    <serviceTask id="tsk_disc_receive_criteria" name="Parse &amp; Validate&#10;Screening Criteria">
+      <incoming>sf_disc_svc_criteria</incoming>
+      <outgoing>sf_disc_svc_run</outgoing>
+    </serviceTask>
+
+    <serviceTask id="tsk_disc_run_screen" name="Run Screen Against&#10;5,000+ Securities">
+      <incoming>sf_disc_svc_run</incoming>
+      <outgoing>sf_disc_svc_results_check</outgoing>
+    </serviceTask>
+
+    <exclusiveGateway id="gw_disc_results_found" name="Results Found?">
+      <incoming>sf_disc_svc_results_check</incoming>
+      <outgoing>sf_disc_svc_has_results</outgoing>
+      <outgoing>sf_disc_svc_no_results</outgoing>
+    </exclusiveGateway>
+
+    <serviceTask id="tsk_disc_notify_no_results" name="Notify: No Results&#10;(suggest broadening criteria)">
+      <incoming>sf_disc_svc_no_results</incoming>
+      <outgoing>sf_disc_svc_end_none</outgoing>
+    </serviceTask>
+
+    <serviceTask id="tsk_disc_score_results" name="Enrich Results with&#10;Why Now Score, Conviction Band,&#10;Analyst Consensus, Earnings Date">
+      <incoming>sf_disc_svc_has_results</incoming>
+      <outgoing>sf_disc_svc_rank</outgoing>
+    </serviceTask>
+
+    <serviceTask id="tsk_disc_ai_rank" name="Apply AI Ranking&#10;(surface highest-signal opportunities)">
+      <incoming>sf_disc_svc_rank</incoming>
+      <outgoing>sf_disc_svc_curated</outgoing>
+    </serviceTask>
+
+    <serviceTask id="tsk_disc_tag_similar" name="Compute Stock Similarity&#10;Clusters for &#39;View Similar&#39; Feature">
+      <incoming>sf_disc_svc_curated</incoming>
+      <outgoing>sf_disc_svc_deliver</outgoing>
+    </serviceTask>
+
+    <serviceTask id="tsk_disc_deliver_results" name="Deliver Paginated Results&#10;to Investor UI">
+      <incoming>sf_disc_svc_deliver</incoming>
+      <outgoing>sf_disc_svc_await</outgoing>
+    </serviceTask>
+
+    <intermediateCatchEvent id="evt_disc_svc_wl_request" name="Watchlist Add Request">
+      <incoming>sf_disc_svc_await</incoming>
+      <outgoing>sf_disc_svc_create</outgoing>
+      <messageEventDefinition />
+    </intermediateCatchEvent>
+
+    <serviceTask id="tsk_disc_create_entry" name="Create Watchlist Entry&#10;(state: Discovery, timestamp, source screen)">
+      <incoming>sf_disc_svc_create</incoming>
+      <outgoing>sf_disc_svc_init_score</outgoing>
+    </serviceTask>
+
+    <serviceTask id="tsk_disc_init_conviction" name="Trigger Initial Conviction&#10;Score Calculation">
+      <incoming>sf_disc_svc_init_score</incoming>
+      <outgoing>sf_disc_svc_done</outgoing>
+    </serviceTask>
+
+    <endEvent id="evt_disc_svc_end_none" name="No Results — Done">
+      <incoming>sf_disc_svc_end_none</incoming>
+    </endEvent>
+
+    <endEvent id="evt_disc_svc_end" name="Entry Created — Done">
+      <incoming>sf_disc_svc_done</incoming>
+    </endEvent>
+
+    <sequenceFlow id="sf_disc_svc_criteria" sourceRef="evt_disc_svc_start" targetRef="tsk_disc_receive_criteria" />
+    <sequenceFlow id="sf_disc_svc_run" sourceRef="tsk_disc_receive_criteria" targetRef="tsk_disc_run_screen" />
+    <sequenceFlow id="sf_disc_svc_results_check" sourceRef="tsk_disc_run_screen" targetRef="gw_disc_results_found" />
+    <sequenceFlow id="sf_disc_svc_has_results" sourceRef="gw_disc_results_found" targetRef="tsk_disc_score_results">
+      <conditionExpression>results found</conditionExpression>
+    </sequenceFlow>
+    <sequenceFlow id="sf_disc_svc_no_results" sourceRef="gw_disc_results_found" targetRef="tsk_disc_notify_no_results">
+      <conditionExpression>no results</conditionExpression>
+    </sequenceFlow>
+    <sequenceFlow id="sf_disc_svc_rank" sourceRef="tsk_disc_score_results" targetRef="tsk_disc_ai_rank" />
+    <sequenceFlow id="sf_disc_svc_curated" sourceRef="tsk_disc_ai_rank" targetRef="tsk_disc_tag_similar" />
+    <sequenceFlow id="sf_disc_svc_deliver" sourceRef="tsk_disc_tag_similar" targetRef="tsk_disc_deliver_results" />
+    <sequenceFlow id="sf_disc_svc_await" sourceRef="tsk_disc_deliver_results" targetRef="evt_disc_svc_wl_request" />
+    <sequenceFlow id="sf_disc_svc_create" sourceRef="evt_disc_svc_wl_request" targetRef="tsk_disc_create_entry" />
+    <sequenceFlow id="sf_disc_svc_init_score" sourceRef="tsk_disc_create_entry" targetRef="tsk_disc_init_conviction" />
+    <sequenceFlow id="sf_disc_svc_done" sourceRef="tsk_disc_init_conviction" targetRef="evt_disc_svc_end" />
+    <sequenceFlow id="sf_disc_svc_end_none" sourceRef="tsk_disc_notify_no_results" targetRef="evt_disc_svc_end_none" />
+
+  </process>
+
+  <!-- ── MARKET DATA LAYER PROCESS ── -->
+  <process id="proc_data_disc" name="Market Data Layer" isExecutable="false">
+
+    <startEvent id="evt_data_disc_start" name="Data Request Received">
+      <outgoing>sf_data_disc_parallel</outgoing>
+    </startEvent>
+
+    <parallelGateway id="gw_data_disc_split" name="Fetch in Parallel">
+      <incoming>sf_data_disc_parallel</incoming>
+      <outgoing>sf_fetch_fundamentals</outgoing>
+      <outgoing>sf_fetch_prices</outgoing>
+      <outgoing>sf_fetch_why_now</outgoing>
+      <outgoing>sf_fetch_consensus</outgoing>
+    </parallelGateway>
+
+    <serviceTask id="tsk_disc_fetch_universe" name="Fetch Security Universe&#10;(fundamentals, sector, market cap)">
+      <incoming>sf_fetch_fundamentals</incoming>
+      <outgoing>sf_data_disc_join1</outgoing>
+    </serviceTask>
+
+    <serviceTask id="tsk_disc_fetch_prices" name="Fetch Price History&#10;&amp; Technical Indicators">
+      <incoming>sf_fetch_prices</incoming>
+      <outgoing>sf_data_disc_join2</outgoing>
+    </serviceTask>
+
+    <serviceTask id="tsk_disc_fetch_catalysts" name="Fetch Why Now Signals&#10;(earnings dates, filings, news)">
+      <incoming>sf_fetch_why_now</incoming>
+      <outgoing>sf_data_disc_join3</outgoing>
+    </serviceTask>
+
+    <serviceTask id="tsk_disc_fetch_consensus" name="Fetch Analyst Consensus&#10;(targets, ratings, estimates)">
+      <incoming>sf_fetch_consensus</incoming>
+      <outgoing>sf_data_disc_join4</outgoing>
+    </serviceTask>
+
+    <parallelGateway id="gw_data_disc_join" name="All Data Ready">
+      <incoming>sf_data_disc_join1</incoming>
+      <incoming>sf_data_disc_join2</incoming>
+      <incoming>sf_data_disc_join3</incoming>
+      <incoming>sf_data_disc_join4</incoming>
+      <outgoing>sf_data_disc_return</outgoing>
+    </parallelGateway>
+
+    <serviceTask id="tsk_disc_return_data" name="Return Normalized Dataset&#10;to Discovery Service">
+      <incoming>sf_data_disc_return</incoming>
+      <outgoing>sf_data_disc_end</outgoing>
+    </serviceTask>
+
+    <endEvent id="evt_data_disc_end" name="Data Delivered">
+      <incoming>sf_data_disc_end</incoming>
+    </endEvent>
+
+    <sequenceFlow id="sf_data_disc_parallel" sourceRef="evt_data_disc_start" targetRef="gw_data_disc_split" />
+    <sequenceFlow id="sf_fetch_fundamentals" sourceRef="gw_data_disc_split" targetRef="tsk_disc_fetch_universe" />
+    <sequenceFlow id="sf_fetch_prices" sourceRef="gw_data_disc_split" targetRef="tsk_disc_fetch_prices" />
+    <sequenceFlow id="sf_fetch_why_now" sourceRef="gw_data_disc_split" targetRef="tsk_disc_fetch_catalysts" />
+    <sequenceFlow id="sf_fetch_consensus" sourceRef="gw_data_disc_split" targetRef="tsk_disc_fetch_consensus" />
+    <sequenceFlow id="sf_data_disc_join1" sourceRef="tsk_disc_fetch_universe" targetRef="gw_data_disc_join" />
+    <sequenceFlow id="sf_data_disc_join2" sourceRef="tsk_disc_fetch_prices" targetRef="gw_data_disc_join" />
+    <sequenceFlow id="sf_data_disc_join3" sourceRef="tsk_disc_fetch_catalysts" targetRef="gw_data_disc_join" />
+    <sequenceFlow id="sf_data_disc_join4" sourceRef="tsk_disc_fetch_consensus" targetRef="gw_data_disc_join" />
+    <sequenceFlow id="sf_data_disc_return" sourceRef="gw_data_disc_join" targetRef="tsk_disc_return_data" />
+    <sequenceFlow id="sf_data_disc_end" sourceRef="tsk_disc_return_data" targetRef="evt_data_disc_end" />
+
+  </process>
+
+  <!-- BPMN DI -->
+  <bpmndi:BPMNDiagram id="di_stock_discovery">
+    <bpmndi:BPMNPlane id="plane_disc" bpmnElement="collab_discovery">
+
+      <bpmndi:BPMNShape id="shape_pool_investor_disc" bpmnElement="pool_investor_disc" isHorizontal="true">
+        <omgdc:Bounds x="30" y="30" width="1500" height="260" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_pool_disc_service" bpmnElement="pool_disc_service" isHorizontal="true">
+        <omgdc:Bounds x="30" y="310" width="1500" height="260" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_pool_data_disc" bpmnElement="pool_data_disc" isHorizontal="true">
+        <omgdc:Bounds x="30" y="590" width="1500" height="200" />
+      </bpmndi:BPMNShape>
+
+      <!-- Investor shapes -->
+      <bpmndi:BPMNShape id="shape_evt_disc_start" bpmnElement="evt_disc_start">
+        <omgdc:Bounds x="80" y="142" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_gw_disc_entry" bpmnElement="gw_disc_entry" isMarkerVisible="true">
+        <omgdc:Bounds x="156" y="138" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_tsk_disc_set_filters" bpmnElement="tsk_disc_set_filters">
+        <omgdc:Bounds x="250" y="60" width="140" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_tsk_disc_select_curated" bpmnElement="tsk_disc_select_curated">
+        <omgdc:Bounds x="250" y="120" width="140" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_tsk_disc_enter_ticker" bpmnElement="tsk_disc_enter_ticker">
+        <omgdc:Bounds x="250" y="210" width="140" height="60" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_evt_disc_results_ready" bpmnElement="evt_disc_results_ready">
+        <omgdc:Bounds x="434" y="82" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_tsk_disc_browse" bpmnElement="tsk_disc_browse">
+        <omgdc:Bounds x="510" y="120" width="140" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_tsk_disc_view_card" bpmnElement="tsk_disc_view_card">
+        <omgdc:Bounds x="690" y="120" width="140" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_gw_disc_card_action" bpmnElement="gw_disc_card_action" isMarkerVisible="true">
+        <omgdc:Bounds x="876" y="138" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_tsk_disc_add_watchlist" bpmnElement="tsk_disc_add_watchlist">
+        <omgdc:Bounds x="970" y="60" width="140" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_tsk_disc_view_similar" bpmnElement="tsk_disc_view_similar">
+        <omgdc:Bounds x="970" y="200" width="140" height="60" />
+      </bpmndi:BPMNShape>
+
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+
+</definitions>

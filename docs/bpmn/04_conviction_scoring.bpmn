@@ -1,0 +1,359 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<definitions xmlns="http://www.omg.org/spec/BPMN/20100524/MODEL"
+             xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+             xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI"
+             xmlns:omgdc="http://www.omg.org/spec/DD/20100524/DC"
+             xmlns:omgdi="http://www.omg.org/spec/DD/20100524/DI"
+             targetNamespace="http://stock-conviction-app/conviction-scoring"
+             id="conviction_scoring">
+
+  <!-- ═══════════════════════════════════════════════════════════════
+       PROCESS: Conviction Score System
+       Maps to PRD: §7.3 — CVX-01 through CVX-09
+       Score Architecture:
+         Fundamental Quality  30%
+         Valuation            25%
+         Why Now              20%
+         Momentum             15%
+         Sentiment            10%
+       ═══════════════════════════════════════════════════════════════ -->
+
+  <collaboration id="collab_conviction">
+    <participant id="pool_conviction_engine" name="Conviction Scoring Engine" processRef="proc_conviction_engine" />
+    <participant id="pool_conviction_user" name="Investor" processRef="proc_conviction_user" />
+  </collaboration>
+
+  <!-- ── CONVICTION ENGINE ── -->
+  <process id="proc_conviction_engine" name="Conviction Scoring Engine" isExecutable="false">
+
+    <startEvent id="evt_cvx_trigger" name="Conviction Score&#10;Calculation Triggered&#10;(new stock, data refresh, or schedule)">
+      <outgoing>sf_cvx_trigger_load</outgoing>
+    </startEvent>
+
+    <serviceTask id="tsk_cvx_load_stock" name="Load Stock from Watchlist&#10;&amp; Prior Score State">
+      <incoming>sf_cvx_trigger_load</incoming>
+      <outgoing>sf_cvx_parallel_start</outgoing>
+    </serviceTask>
+
+    <!-- Parallel fetch of all 5 component inputs -->
+    <parallelGateway id="gw_cvx_parallel_fetch" name="Fetch All Component&#10;Data in Parallel">
+      <incoming>sf_cvx_parallel_start</incoming>
+      <outgoing>sf_cvx_fetch_fundamental</outgoing>
+      <outgoing>sf_cvx_fetch_valuation</outgoing>
+      <outgoing>sf_cvx_fetch_whynow</outgoing>
+      <outgoing>sf_cvx_fetch_momentum</outgoing>
+      <outgoing>sf_cvx_fetch_sentiment</outgoing>
+    </parallelGateway>
+
+    <!-- Component 1: Fundamental Quality (30%) -->
+    <serviceTask id="tsk_cvx_fundamental" name="Score Fundamental Quality&#10;(ROIC, margins, balance sheet,&#10;revenue growth, FCF)&#10;Weight: 30%">
+      <incoming>sf_cvx_fetch_fundamental</incoming>
+      <outgoing>sf_cvx_join_fundamental</outgoing>
+    </serviceTask>
+
+    <!-- Component 2: Valuation Attractiveness (25%) -->
+    <serviceTask id="tsk_cvx_valuation" name="Score Valuation Attractiveness&#10;(upside vs. DCF, P/E vs. peers,&#10;EV/EBITDA, FCF yield)&#10;Weight: 25%">
+      <incoming>sf_cvx_fetch_valuation</incoming>
+      <outgoing>sf_cvx_join_valuation</outgoing>
+    </serviceTask>
+
+    <!-- Component 3: Why Now (20%) -->
+    <serviceTask id="tsk_cvx_whynow" name="Retrieve Why Now Score&#10;(from Why Now Engine)&#10;Weight: 20%">
+      <incoming>sf_cvx_fetch_whynow</incoming>
+      <outgoing>sf_cvx_join_whynow</outgoing>
+    </serviceTask>
+
+    <!-- Component 4: Momentum (15%) -->
+    <serviceTask id="tsk_cvx_momentum" name="Score Price &amp; Earnings&#10;Momentum&#10;(price vs. 52w high, EPS revision trend)&#10;Weight: 15%">
+      <incoming>sf_cvx_fetch_momentum</incoming>
+      <outgoing>sf_cvx_join_momentum</outgoing>
+    </serviceTask>
+
+    <!-- Component 5: Sentiment (10%) -->
+    <serviceTask id="tsk_cvx_sentiment" name="Score Sentiment&#10;(analyst consensus, news NLP,&#10;social signal)&#10;Weight: 10%">
+      <incoming>sf_cvx_fetch_sentiment</incoming>
+      <outgoing>sf_cvx_join_sentiment</outgoing>
+    </serviceTask>
+
+    <!-- Join all components -->
+    <parallelGateway id="gw_cvx_parallel_join" name="All Components Scored">
+      <incoming>sf_cvx_join_fundamental</incoming>
+      <incoming>sf_cvx_join_valuation</incoming>
+      <incoming>sf_cvx_join_whynow</incoming>
+      <incoming>sf_cvx_join_momentum</incoming>
+      <incoming>sf_cvx_join_sentiment</incoming>
+      <outgoing>sf_cvx_compute</outgoing>
+    </parallelGateway>
+
+    <!-- Compute composite score -->
+    <serviceTask id="tsk_cvx_compute_composite" name="Compute Composite Conviction&#10;Score (0–100) with Weighted Sum">
+      <incoming>sf_cvx_compute</incoming>
+      <outgoing>sf_cvx_check_delta</outgoing>
+    </serviceTask>
+
+    <!-- Check if score changed materially -->
+    <exclusiveGateway id="gw_cvx_delta_check" name="Score Changed&#10;≥ 3 points?">
+      <incoming>sf_cvx_check_delta</incoming>
+      <outgoing>sf_cvx_material_change</outgoing>
+      <outgoing>sf_cvx_no_change</outgoing>
+    </exclusiveGateway>
+
+    <serviceTask id="tsk_cvx_record_change" name="Record Score Change&#10;(timestamp, delta, reason per component)">
+      <incoming>sf_cvx_material_change</incoming>
+      <outgoing>sf_cvx_generate_narrative</outgoing>
+    </serviceTask>
+
+    <serviceTask id="tsk_cvx_generate_narrative" name="Generate Component&#10;Mini-Narratives via Claude">
+      <incoming>sf_cvx_generate_narrative</incoming>
+      <outgoing>sf_cvx_check_thresholds</outgoing>
+    </serviceTask>
+
+    <!-- Check for threshold crossings — inclusiveGateway fires ALL matching conditions.
+         default="sf_cvx_no_threshold" fires only when no other condition matches. -->
+    <inclusiveGateway id="gw_cvx_threshold" name="Threshold Crossed?" default="sf_cvx_no_threshold">
+      <incoming>sf_cvx_check_thresholds</incoming>
+      <incoming>sf_cvx_no_change</incoming>
+      <outgoing>sf_cvx_high_conviction</outgoing>
+      <outgoing>sf_cvx_score_drop</outgoing>
+      <outgoing>sf_cvx_band_change</outgoing>
+      <outgoing>sf_cvx_no_threshold</outgoing>
+    </inclusiveGateway>
+
+    <!-- High conviction reached -->
+    <serviceTask id="tsk_cvx_alert_high" name="Trigger High Conviction Alert&#10;(score ≥ 80)&#10;Suggest: set entry conditions">
+      <incoming>sf_cvx_high_conviction</incoming>
+      <outgoing>sf_cvx_high_update_state</outgoing>
+    </serviceTask>
+
+    <serviceTask id="tsk_cvx_auto_promote" name="Auto-Promote Watchlist State&#10;to High Conviction">
+      <incoming>sf_cvx_high_update_state</incoming>
+      <outgoing>sf_cvx_to_persist_promote</outgoing>
+    </serviceTask>
+
+    <!-- Score drop alert -->
+    <serviceTask id="tsk_cvx_alert_drop" name="Trigger Thesis Check Prompt&#10;(score dropped ≥ 10 points)&#10;Link to score breakdown">
+      <incoming>sf_cvx_score_drop</incoming>
+      <outgoing>sf_cvx_to_persist_drop</outgoing>
+    </serviceTask>
+
+    <!-- Band change notification -->
+    <serviceTask id="tsk_cvx_notify_band" name="Notify Conviction Band Change&#10;(e.g., Building → Conviction)">
+      <incoming>sf_cvx_band_change</incoming>
+      <outgoing>sf_cvx_to_persist_band</outgoing>
+    </serviceTask>
+
+    <!-- Inclusive join — waits for all fired threshold branches before persisting -->
+    <inclusiveGateway id="gw_cvx_threshold_join" name="Threshold Actions Complete">
+      <incoming>sf_cvx_to_persist_promote</incoming>
+      <incoming>sf_cvx_to_persist_drop</incoming>
+      <incoming>sf_cvx_to_persist_band</incoming>
+      <incoming>sf_cvx_no_threshold</incoming>
+      <outgoing>sf_cvx_to_persist_gate</outgoing>
+    </inclusiveGateway>
+
+    <!-- Persist updated score -->
+    <serviceTask id="tsk_cvx_persist" name="Persist Score to Database&#10;&amp; Update All UI Surfaces">
+      <incoming>sf_cvx_to_persist_gate</incoming>
+      <outgoing>sf_cvx_check_custom_weights</outgoing>
+    </serviceTask>
+
+    <!-- Check for custom weight overrides (advanced mode) -->
+    <exclusiveGateway id="gw_cvx_custom_weights" name="User Has Custom&#10;Weight Overrides?">
+      <incoming>sf_cvx_check_custom_weights</incoming>
+      <outgoing>sf_cvx_recalc_custom</outgoing>
+      <outgoing>sf_cvx_end</outgoing>
+    </exclusiveGateway>
+
+    <serviceTask id="tsk_cvx_recalc_custom" name="Recalculate Score with&#10;User-Defined Custom Weights">
+      <incoming>sf_cvx_recalc_custom</incoming>
+      <outgoing>sf_cvx_custom_end</outgoing>
+    </serviceTask>
+
+    <endEvent id="evt_cvx_end" name="Conviction Score&#10;Updated">
+      <incoming>sf_cvx_end</incoming>
+      <incoming>sf_cvx_custom_end</incoming>
+    </endEvent>
+
+    <sequenceFlow id="sf_cvx_trigger_load" sourceRef="evt_cvx_trigger" targetRef="tsk_cvx_load_stock" />
+    <sequenceFlow id="sf_cvx_parallel_start" sourceRef="tsk_cvx_load_stock" targetRef="gw_cvx_parallel_fetch" />
+    <sequenceFlow id="sf_cvx_fetch_fundamental" sourceRef="gw_cvx_parallel_fetch" targetRef="tsk_cvx_fundamental" />
+    <sequenceFlow id="sf_cvx_fetch_valuation" sourceRef="gw_cvx_parallel_fetch" targetRef="tsk_cvx_valuation" />
+    <sequenceFlow id="sf_cvx_fetch_whynow" sourceRef="gw_cvx_parallel_fetch" targetRef="tsk_cvx_whynow" />
+    <sequenceFlow id="sf_cvx_fetch_momentum" sourceRef="gw_cvx_parallel_fetch" targetRef="tsk_cvx_momentum" />
+    <sequenceFlow id="sf_cvx_fetch_sentiment" sourceRef="gw_cvx_parallel_fetch" targetRef="tsk_cvx_sentiment" />
+    <sequenceFlow id="sf_cvx_join_fundamental" sourceRef="tsk_cvx_fundamental" targetRef="gw_cvx_parallel_join" />
+    <sequenceFlow id="sf_cvx_join_valuation" sourceRef="tsk_cvx_valuation" targetRef="gw_cvx_parallel_join" />
+    <sequenceFlow id="sf_cvx_join_whynow" sourceRef="tsk_cvx_whynow" targetRef="gw_cvx_parallel_join" />
+    <sequenceFlow id="sf_cvx_join_momentum" sourceRef="tsk_cvx_momentum" targetRef="gw_cvx_parallel_join" />
+    <sequenceFlow id="sf_cvx_join_sentiment" sourceRef="tsk_cvx_sentiment" targetRef="gw_cvx_parallel_join" />
+    <sequenceFlow id="sf_cvx_compute" sourceRef="gw_cvx_parallel_join" targetRef="tsk_cvx_compute_composite" />
+    <sequenceFlow id="sf_cvx_check_delta" sourceRef="tsk_cvx_compute_composite" targetRef="gw_cvx_delta_check" />
+    <sequenceFlow id="sf_cvx_material_change" sourceRef="gw_cvx_delta_check" targetRef="tsk_cvx_record_change">
+      <conditionExpression>delta >= 3</conditionExpression>
+    </sequenceFlow>
+    <sequenceFlow id="sf_cvx_no_change" sourceRef="gw_cvx_delta_check" targetRef="gw_cvx_threshold">
+      <conditionExpression>delta &lt; 3</conditionExpression>
+    </sequenceFlow>
+    <sequenceFlow id="sf_cvx_generate_narrative" sourceRef="tsk_cvx_record_change" targetRef="tsk_cvx_generate_narrative" />
+    <sequenceFlow id="sf_cvx_check_thresholds" sourceRef="tsk_cvx_generate_narrative" targetRef="gw_cvx_threshold" />
+    <sequenceFlow id="sf_cvx_high_conviction" sourceRef="gw_cvx_threshold" targetRef="tsk_cvx_alert_high">
+      <conditionExpression>score >= 80</conditionExpression>
+    </sequenceFlow>
+    <sequenceFlow id="sf_cvx_score_drop" sourceRef="gw_cvx_threshold" targetRef="tsk_cvx_alert_drop">
+      <conditionExpression>score dropped >= 10 points</conditionExpression>
+    </sequenceFlow>
+    <sequenceFlow id="sf_cvx_band_change" sourceRef="gw_cvx_threshold" targetRef="tsk_cvx_notify_band">
+      <conditionExpression>conviction band changed</conditionExpression>
+    </sequenceFlow>
+    <sequenceFlow id="sf_cvx_no_threshold" sourceRef="gw_cvx_threshold" targetRef="gw_cvx_threshold_join" />
+    <sequenceFlow id="sf_cvx_high_update_state"   sourceRef="tsk_cvx_alert_high"       targetRef="tsk_cvx_auto_promote"      />
+    <sequenceFlow id="sf_cvx_to_persist_promote"  sourceRef="tsk_cvx_auto_promote"     targetRef="gw_cvx_threshold_join"     />
+    <sequenceFlow id="sf_cvx_to_persist_drop"     sourceRef="tsk_cvx_alert_drop"       targetRef="gw_cvx_threshold_join"     />
+    <sequenceFlow id="sf_cvx_to_persist_band"     sourceRef="tsk_cvx_notify_band"      targetRef="gw_cvx_threshold_join"     />
+    <sequenceFlow id="sf_cvx_to_persist_gate"     sourceRef="gw_cvx_threshold_join"    targetRef="tsk_cvx_persist"           />
+    <sequenceFlow id="sf_cvx_check_custom_weights" sourceRef="tsk_cvx_persist"         targetRef="gw_cvx_custom_weights"     />
+    <sequenceFlow id="sf_cvx_recalc_custom" sourceRef="gw_cvx_custom_weights" targetRef="tsk_cvx_recalc_custom">
+      <conditionExpression>user has custom weights</conditionExpression>
+    </sequenceFlow>
+    <sequenceFlow id="sf_cvx_end" sourceRef="gw_cvx_custom_weights" targetRef="evt_cvx_end">
+      <conditionExpression>default weights</conditionExpression>
+    </sequenceFlow>
+    <sequenceFlow id="sf_cvx_custom_end" sourceRef="tsk_cvx_recalc_custom" targetRef="evt_cvx_end" />
+
+  </process>
+
+  <!-- ── INVESTOR CONVICTION VIEW ── -->
+  <process id="proc_conviction_user" name="Investor — Conviction View" isExecutable="false">
+
+    <startEvent id="evt_cvx_user_start" name="Investor Opens&#10;Stock Research Card">
+      <outgoing>sf_cvx_user_view</outgoing>
+    </startEvent>
+
+    <userTask id="tsk_cvx_view_score" name="View Conviction Score&#10;(band, trend, component breakdown)">
+      <incoming>sf_cvx_user_view</incoming>
+      <outgoing>sf_cvx_user_action</outgoing>
+    </userTask>
+
+    <exclusiveGateway id="gw_cvx_user_action" name="User Action?">
+      <incoming>sf_cvx_user_action</incoming>
+      <outgoing>sf_cvx_ask_explain</outgoing>
+      <outgoing>sf_cvx_override_weights</outgoing>
+      <outgoing>sf_cvx_view_history</outgoing>
+      <outgoing>sf_cvx_compare_peers</outgoing>
+    </exclusiveGateway>
+
+    <userTask id="tsk_cvx_ask_explain" name="Ask Claude: Why Did&#10;Conviction Change?">
+      <incoming>sf_cvx_ask_explain</incoming>
+      <outgoing>sf_cvx_explain_done</outgoing>
+    </userTask>
+
+    <userTask id="tsk_cvx_override_weights" name="Set Custom Component&#10;Weights (Advanced Mode)">
+      <incoming>sf_cvx_override_weights</incoming>
+      <outgoing>sf_cvx_override_done</outgoing>
+    </userTask>
+
+    <userTask id="tsk_cvx_view_history" name="View Score History Chart&#10;(conviction over time)">
+      <incoming>sf_cvx_view_history</incoming>
+      <outgoing>sf_cvx_history_done</outgoing>
+    </userTask>
+
+    <userTask id="tsk_cvx_compare_peers" name="Compare Conviction Scores&#10;Across Peer Group">
+      <incoming>sf_cvx_compare_peers</incoming>
+      <outgoing>sf_cvx_peers_done</outgoing>
+    </userTask>
+
+    <endEvent id="evt_cvx_user_end" name="Conviction Review&#10;Complete">
+      <incoming>sf_cvx_explain_done</incoming>
+      <incoming>sf_cvx_override_done</incoming>
+      <incoming>sf_cvx_history_done</incoming>
+      <incoming>sf_cvx_peers_done</incoming>
+    </endEvent>
+
+    <sequenceFlow id="sf_cvx_user_view" sourceRef="evt_cvx_user_start" targetRef="tsk_cvx_view_score" />
+    <sequenceFlow id="sf_cvx_user_action" sourceRef="tsk_cvx_view_score" targetRef="gw_cvx_user_action" />
+    <sequenceFlow id="sf_cvx_ask_explain" sourceRef="gw_cvx_user_action" targetRef="tsk_cvx_ask_explain" />
+    <sequenceFlow id="sf_cvx_override_weights" sourceRef="gw_cvx_user_action" targetRef="tsk_cvx_override_weights" />
+    <sequenceFlow id="sf_cvx_view_history" sourceRef="gw_cvx_user_action" targetRef="tsk_cvx_view_history" />
+    <sequenceFlow id="sf_cvx_compare_peers" sourceRef="gw_cvx_user_action" targetRef="tsk_cvx_compare_peers" />
+    <sequenceFlow id="sf_cvx_explain_done"  sourceRef="tsk_cvx_ask_explain"      targetRef="evt_cvx_user_end" />
+    <sequenceFlow id="sf_cvx_override_done" sourceRef="tsk_cvx_override_weights"  targetRef="evt_cvx_user_end" />
+    <sequenceFlow id="sf_cvx_history_done"  sourceRef="tsk_cvx_view_history"      targetRef="evt_cvx_user_end" />
+    <sequenceFlow id="sf_cvx_peers_done"    sourceRef="tsk_cvx_compare_peers"     targetRef="evt_cvx_user_end" />
+
+  </process>
+
+  <!-- BPMN DI -->
+  <bpmndi:BPMNDiagram id="di_conviction">
+    <bpmndi:BPMNPlane id="plane_conviction" bpmnElement="collab_conviction">
+
+      <bpmndi:BPMNShape id="shape_pool_conviction_engine" bpmnElement="pool_conviction_engine" isHorizontal="true">
+        <omgdc:Bounds x="30" y="30" width="1700" height="500" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_pool_conviction_user" bpmnElement="pool_conviction_user" isHorizontal="true">
+        <omgdc:Bounds x="30" y="550" width="1700" height="200" />
+      </bpmndi:BPMNShape>
+
+      <!-- Conviction engine key shapes -->
+      <bpmndi:BPMNShape id="shape_evt_cvx_trigger" bpmnElement="evt_cvx_trigger">
+        <omgdc:Bounds x="80" y="242" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_tsk_cvx_load_stock" bpmnElement="tsk_cvx_load_stock">
+        <omgdc:Bounds x="160" y="220" width="120" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_gw_cvx_parallel_fetch" bpmnElement="gw_cvx_parallel_fetch">
+        <omgdc:Bounds x="330" y="235" width="50" height="50" />
+      </bpmndi:BPMNShape>
+
+      <!-- 5 component scoring tasks -->
+      <bpmndi:BPMNShape id="shape_tsk_cvx_fundamental" bpmnElement="tsk_cvx_fundamental">
+        <omgdc:Bounds x="430" y="50" width="160" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_tsk_cvx_valuation" bpmnElement="tsk_cvx_valuation">
+        <omgdc:Bounds x="430" y="150" width="160" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_tsk_cvx_whynow" bpmnElement="tsk_cvx_whynow">
+        <omgdc:Bounds x="430" y="250" width="160" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_tsk_cvx_momentum" bpmnElement="tsk_cvx_momentum">
+        <omgdc:Bounds x="430" y="350" width="160" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_tsk_cvx_sentiment" bpmnElement="tsk_cvx_sentiment">
+        <omgdc:Bounds x="430" y="450" width="160" height="70" />
+      </bpmndi:BPMNShape>
+
+      <bpmndi:BPMNShape id="shape_gw_cvx_parallel_join" bpmnElement="gw_cvx_parallel_join">
+        <omgdc:Bounds x="640" y="235" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_tsk_cvx_compute_composite" bpmnElement="tsk_cvx_compute_composite">
+        <omgdc:Bounds x="740" y="220" width="130" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_gw_cvx_delta_check" bpmnElement="gw_cvx_delta_check" isMarkerVisible="true">
+        <omgdc:Bounds x="920" y="235" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_tsk_cvx_record_change" bpmnElement="tsk_cvx_record_change">
+        <omgdc:Bounds x="1010" y="150" width="130" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_tsk_cvx_generate_narrative" bpmnElement="tsk_cvx_generate_narrative">
+        <omgdc:Bounds x="1180" y="150" width="130" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_gw_cvx_threshold" bpmnElement="gw_cvx_threshold" isMarkerVisible="true">
+        <omgdc:Bounds x="1360" y="235" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_tsk_cvx_alert_high" bpmnElement="tsk_cvx_alert_high">
+        <omgdc:Bounds x="1450" y="60" width="140" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_tsk_cvx_alert_drop" bpmnElement="tsk_cvx_alert_drop">
+        <omgdc:Bounds x="1450" y="220" width="140" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_tsk_cvx_notify_band" bpmnElement="tsk_cvx_notify_band">
+        <omgdc:Bounds x="1450" y="380" width="140" height="80" />
+      </bpmndi:BPMNShape>
+
+      <bpmndi:BPMNShape id="shape_gw_cvx_threshold_join" bpmnElement="gw_cvx_threshold_join">
+        <omgdc:Bounds x="1640" y="235" width="50" height="50" />
+      </bpmndi:BPMNShape>
+
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+
+</definitions>

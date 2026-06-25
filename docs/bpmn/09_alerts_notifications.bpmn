@@ -1,0 +1,429 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<definitions xmlns="http://www.omg.org/spec/BPMN/20100524/MODEL"
+             xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+             xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI"
+             xmlns:omgdc="http://www.omg.org/spec/DD/20100524/DC"
+             xmlns:omgdi="http://www.omg.org/spec/DD/20100524/DI"
+             targetNamespace="http://stock-conviction-app/alerts-notifications"
+             id="alerts_notifications">
+
+  <!-- ═══════════════════════════════════════════════════════════════
+       PROCESS: Alerts & Notification System
+       Maps to PRD: §7.9 — ALT-01 through ALT-08
+       Alert types: Conviction Surge/Drop, Why Now Hot Window,
+       Thesis Drift/Broken, Earnings Countdown, Catalyst Event,
+       Entry Condition Met, Exit Signal, Peer Dislocation
+       ═══════════════════════════════════════════════════════════════ -->
+
+  <collaboration id="collab_alerts">
+    <participant id="pool_alt_investor"  name="Investor"               processRef="proc_alt_investor"  />
+    <participant id="pool_alt_engine"    name="Alert Engine"           processRef="proc_alt_engine"    />
+    <participant id="pool_alt_delivery"  name="Delivery Service"       processRef="proc_alt_delivery"  />
+
+    <messageFlow id="mf_alt_define"      name="Alert Definition"        sourceRef="tsk_alt_set_alert"       targetRef="tsk_alte_register"        />
+    <messageFlow id="mf_alt_notification" name="Alert Notification"     sourceRef="tsk_altd_deliver"        targetRef="tsk_alt_receive_alert"    />
+    <messageFlow id="mf_alt_trigger"     name="Triggered Alert Payload" sourceRef="tsk_alte_fire_alert"     targetRef="tsk_altd_format"          />
+    <messageFlow id="mf_alt_snooze"      name="Snooze Request"          sourceRef="tsk_alt_snooze"          targetRef="tsk_alte_snooze_handler"  />
+  </collaboration>
+
+  <!-- ══════════════════════════
+       POOL: INVESTOR
+       ══════════════════════════ -->
+  <process id="proc_alt_investor" name="Investor — Alerts" isExecutable="false">
+
+    <startEvent id="evt_alt_start" name="Investor Configures&#10;Alert Preferences">
+      <outgoing>sf_alt_start_setup</outgoing>
+    </startEvent>
+
+    <userTask id="tsk_alt_choose_type" name="Choose Alert Type&#10;————————————————&#10;• Conviction Surge (≥+10 pts)&#10;• Conviction Drop (≥-10 pts)&#10;• Why Now Hot Window (≥70)&#10;• Thesis Drift (diverging)&#10;• Thesis Broken (invalidated)&#10;• Earnings Countdown (T-7/3/1)&#10;• Catalyst Event (filed/rated)&#10;• Entry Condition Met&#10;• Exit Signal&#10;• Peer Dislocation">
+      <incoming>sf_alt_start_setup</incoming>
+      <outgoing>sf_alt_type_to_threshold</outgoing>
+    </userTask>
+
+    <userTask id="tsk_alt_set_threshold" name="Set Alert Threshold&#10;&amp; Parameters&#10;(e.g., conviction drop > 15 pts,&#10;entry price = $X, snooze period)">
+      <incoming>sf_alt_type_to_threshold</incoming>
+      <outgoing>sf_alt_choose_channel</outgoing>
+    </userTask>
+
+    <userTask id="tsk_alt_choose_channel" name="Choose Delivery Channel&#10;(in-app / email / push notification)">
+      <incoming>sf_alt_choose_channel</incoming>
+      <outgoing>sf_alt_set_alert</outgoing>
+    </userTask>
+
+    <userTask id="tsk_alt_set_alert" name="Confirm &amp; Activate Alert&#10;(saved per stock in watchlist)">
+      <incoming>sf_alt_set_alert</incoming>
+      <outgoing>sf_alt_monitoring_wait</outgoing>
+    </userTask>
+
+    <!-- Waiting for alert to fire -->
+    <intermediateCatchEvent id="evt_alt_alert_fired" name="Alert Received">
+      <incoming>sf_alt_monitoring_wait</incoming>
+      <outgoing>sf_alt_to_receive</outgoing>
+      <messageEventDefinition />
+    </intermediateCatchEvent>
+
+    <userTask id="tsk_alt_receive_alert" name="View Alert Notification&#10;—————————————————&#10;• Alert type &amp; stock name&#10;• Claude 2–3 sentence summary&#10;• Direct link to relevant view&#10;• Timestamp &amp; delta value">
+      <incoming>sf_alt_to_receive</incoming>
+      <outgoing>sf_alt_review_action</outgoing>
+    </userTask>
+
+    <exclusiveGateway id="gw_alt_action" name="Investor Action?">
+      <incoming>sf_alt_review_action</incoming>
+      <outgoing>sf_alt_act_open_view</outgoing>
+      <outgoing>sf_alt_act_snooze</outgoing>
+      <outgoing>sf_alt_act_dismiss</outgoing>
+      <outgoing>sf_alt_act_disable</outgoing>
+    </exclusiveGateway>
+
+    <!-- Open linked view -->
+    <exclusiveGateway id="gw_alt_linked_view" name="Which View to Open?">
+      <incoming>sf_alt_act_open_view</incoming>
+      <outgoing>sf_alt_open_scoring</outgoing>
+      <outgoing>sf_alt_open_thesis</outgoing>
+      <outgoing>sf_alt_open_valuation</outgoing>
+      <outgoing>sf_alt_open_whynow</outgoing>
+      <outgoing>sf_alt_open_position</outgoing>
+    </exclusiveGateway>
+
+    <userTask id="tsk_alt_open_score_view"    name="Open Conviction Score&#10;Breakdown">
+      <incoming>sf_alt_open_scoring</incoming>    <outgoing>sf_alt_score_view_done</outgoing>
+    </userTask>
+    <userTask id="tsk_alt_open_thesis_view"   name="Open Thesis Monitor&#10;/ Drift Report">
+      <incoming>sf_alt_open_thesis</incoming>     <outgoing>sf_alt_thesis_view_done</outgoing>
+    </userTask>
+    <userTask id="tsk_alt_open_val_view"      name="Open Valuation Scenario&#10;Analysis">
+      <incoming>sf_alt_open_valuation</incoming>  <outgoing>sf_alt_val_view_done</outgoing>
+    </userTask>
+    <userTask id="tsk_alt_open_whynow_view"   name="Open Why Now Card&#10;/ Catalyst Details">
+      <incoming>sf_alt_open_whynow</incoming>     <outgoing>sf_alt_whynow_view_done</outgoing>
+    </userTask>
+    <userTask id="tsk_alt_open_position_view" name="Open Position Sizing&#10;/ Exit Review">
+      <incoming>sf_alt_open_position</incoming>   <outgoing>sf_alt_position_view_done</outgoing>
+    </userTask>
+
+    <!-- Snooze -->
+    <userTask id="tsk_alt_snooze" name="Snooze Alert&#10;(select snooze period:&#10;1h / 4h / 1d / 1w)">
+      <incoming>sf_alt_act_snooze</incoming>
+      <outgoing>sf_alt_snoozed_wait</outgoing>
+    </userTask>
+
+    <intermediateCatchEvent id="evt_alt_snooze_expired" name="Snooze Period&#10;Expired">
+      <incoming>sf_alt_snoozed_wait</incoming>
+      <outgoing>sf_alt_back_to_alert</outgoing>
+      <timerEventDefinition><timeDuration>${snooze_period}</timeDuration></timerEventDefinition>
+    </intermediateCatchEvent>
+    <sequenceFlow id="sf_alt_back_to_alert" sourceRef="evt_alt_snooze_expired" targetRef="tsk_alt_receive_alert" />
+
+    <!-- Disable alert -->
+    <userTask id="tsk_alt_disable_alert" name="Disable or Modify Alert&#10;(adjust threshold, channel, or remove)">
+      <incoming>sf_alt_act_disable</incoming>
+      <outgoing>sf_alt_disabled_end</outgoing>
+    </userTask>
+
+    <endEvent id="evt_alt_view_done" name="Alert Actioned&#10;(continue monitoring)">
+      <incoming>sf_alt_score_view_done</incoming>
+      <incoming>sf_alt_thesis_view_done</incoming>
+      <incoming>sf_alt_val_view_done</incoming>
+      <incoming>sf_alt_whynow_view_done</incoming>
+      <incoming>sf_alt_position_view_done</incoming>
+      <incoming>sf_alt_act_dismiss</incoming>
+    </endEvent>
+
+    <endEvent id="evt_alt_disabled" name="Alert Disabled">
+      <incoming>sf_alt_disabled_end</incoming>
+    </endEvent>
+
+    <sequenceFlow id="sf_alt_start_setup"       sourceRef="evt_alt_start"            targetRef="tsk_alt_choose_type"      />
+    <sequenceFlow id="sf_alt_type_to_threshold" sourceRef="tsk_alt_choose_type"      targetRef="tsk_alt_set_threshold"    />
+    <sequenceFlow id="sf_alt_choose_channel"    sourceRef="tsk_alt_set_threshold"    targetRef="tsk_alt_choose_channel"   />
+    <sequenceFlow id="sf_alt_set_alert"         sourceRef="tsk_alt_choose_channel"   targetRef="tsk_alt_set_alert"        />
+    <sequenceFlow id="sf_alt_monitoring_wait"   sourceRef="tsk_alt_set_alert"        targetRef="evt_alt_alert_fired"      />
+    <sequenceFlow id="sf_alt_to_receive"        sourceRef="evt_alt_alert_fired"      targetRef="tsk_alt_receive_alert"    />
+    <sequenceFlow id="sf_alt_review_action"     sourceRef="tsk_alt_receive_alert"    targetRef="gw_alt_action"            />
+    <sequenceFlow id="sf_alt_act_open_view"     sourceRef="gw_alt_action"            targetRef="gw_alt_linked_view">
+      <conditionExpression>open linked view</conditionExpression>
+    </sequenceFlow>
+    <sequenceFlow id="sf_alt_act_snooze"        sourceRef="gw_alt_action"            targetRef="tsk_alt_snooze">
+      <conditionExpression>snooze</conditionExpression>
+    </sequenceFlow>
+    <sequenceFlow id="sf_alt_act_dismiss"       sourceRef="gw_alt_action"            targetRef="evt_alt_view_done">
+      <conditionExpression>dismiss</conditionExpression>
+    </sequenceFlow>
+    <sequenceFlow id="sf_alt_act_disable"       sourceRef="gw_alt_action"            targetRef="tsk_alt_disable_alert">
+      <conditionExpression>disable alert</conditionExpression>
+    </sequenceFlow>
+    <sequenceFlow id="sf_alt_open_scoring"      sourceRef="gw_alt_linked_view"       targetRef="tsk_alt_open_score_view">
+      <conditionExpression>conviction change</conditionExpression>
+    </sequenceFlow>
+    <sequenceFlow id="sf_alt_open_thesis"       sourceRef="gw_alt_linked_view"       targetRef="tsk_alt_open_thesis_view">
+      <conditionExpression>thesis drift/broken</conditionExpression>
+    </sequenceFlow>
+    <sequenceFlow id="sf_alt_open_valuation"    sourceRef="gw_alt_linked_view"       targetRef="tsk_alt_open_val_view">
+      <conditionExpression>valuation / entry condition</conditionExpression>
+    </sequenceFlow>
+    <sequenceFlow id="sf_alt_open_whynow"       sourceRef="gw_alt_linked_view"       targetRef="tsk_alt_open_whynow_view">
+      <conditionExpression>Why Now / catalyst</conditionExpression>
+    </sequenceFlow>
+    <sequenceFlow id="sf_alt_open_position"     sourceRef="gw_alt_linked_view"       targetRef="tsk_alt_open_position_view">
+      <conditionExpression>exit signal / position</conditionExpression>
+    </sequenceFlow>
+    <sequenceFlow id="sf_alt_score_view_done"    sourceRef="tsk_alt_open_score_view"    targetRef="evt_alt_view_done"        />
+    <sequenceFlow id="sf_alt_thesis_view_done"  sourceRef="tsk_alt_open_thesis_view"   targetRef="evt_alt_view_done"        />
+    <sequenceFlow id="sf_alt_val_view_done"     sourceRef="tsk_alt_open_val_view"      targetRef="evt_alt_view_done"        />
+    <sequenceFlow id="sf_alt_whynow_view_done"  sourceRef="tsk_alt_open_whynow_view"   targetRef="evt_alt_view_done"        />
+    <sequenceFlow id="sf_alt_position_view_done" sourceRef="tsk_alt_open_position_view" targetRef="evt_alt_view_done"      />
+    <sequenceFlow id="sf_alt_snoozed_wait"      sourceRef="tsk_alt_snooze"           targetRef="evt_alt_snooze_expired"   />
+    <sequenceFlow id="sf_alt_disabled_end"      sourceRef="tsk_alt_disable_alert"    targetRef="evt_alt_disabled"         />
+
+  </process>
+
+  <!-- ══════════════════════════
+       POOL: ALERT ENGINE
+       ══════════════════════════ -->
+  <process id="proc_alt_engine" name="Alert Engine" isExecutable="false">
+
+    <startEvent id="evt_alte_start" name="Alert Definition&#10;Received / Monitor Active">
+      <outgoing>sf_alte_register</outgoing>
+    </startEvent>
+
+    <serviceTask id="tsk_alte_register" name="Register Alert Condition&#10;in Monitoring System&#10;(per stock, per user, per type)">
+      <incoming>sf_alte_register</incoming>
+      <outgoing>sf_alte_continuous_monitor</outgoing>
+    </serviceTask>
+
+    <!-- Continuous monitoring loop — fires every 5 minutes -->
+    <intermediateCatchEvent id="evt_alte_data_tick" name="Data Refresh&#10;Event (every 5 min)">
+      <incoming>sf_alte_continuous_monitor</incoming>
+      <outgoing>sf_alte_eval_conditions</outgoing>
+      <timerEventDefinition><timeCycle>R/PT5M</timeCycle></timerEventDefinition>
+    </intermediateCatchEvent>
+
+    <serviceTask id="tsk_alte_evaluate_all" name="Evaluate All Active Alert&#10;Conditions Against Latest Data&#10;(conviction, Why Now, thesis,&#10;price, earnings calendar)">
+      <incoming>sf_alte_eval_conditions</incoming>
+      <outgoing>sf_alte_any_triggered</outgoing>
+    </serviceTask>
+
+    <exclusiveGateway id="gw_alte_triggered" name="Any Alert&#10;Condition Met?">
+      <incoming>sf_alte_any_triggered</incoming>
+      <outgoing>sf_alte_yes_triggered</outgoing>
+      <outgoing>sf_alte_no_triggered</outgoing>
+    </exclusiveGateway>
+
+    <!-- No trigger: loop back -->
+    <sequenceFlow id="sf_alte_no_triggered" sourceRef="gw_alte_triggered" targetRef="evt_alte_data_tick">
+      <conditionExpression>no condition met</conditionExpression>
+    </sequenceFlow>
+
+    <!-- Trigger: classify type and fire -->
+    <serviceTask id="tsk_alte_classify_trigger" name="Classify Triggered Alert&#10;by Type &amp; Severity&#10;(info / warning / urgent)">
+      <incoming>sf_alte_yes_triggered</incoming>
+      <outgoing>sf_alte_request_summary</outgoing>
+    </serviceTask>
+
+    <serviceTask id="tsk_alte_claude_summary" name="Request Claude 2–3 Sentence&#10;Context Summary for Alert">
+      <incoming>sf_alte_request_summary</incoming>
+      <outgoing>sf_alte_build_payload</outgoing>
+    </serviceTask>
+
+    <serviceTask id="tsk_alte_fire_alert" name="Build Alert Payload&#10;(type, stock, delta, summary,&#10;deep-link to relevant view)">
+      <incoming>sf_alte_build_payload</incoming>
+      <outgoing>sf_alte_log</outgoing>
+    </serviceTask>
+
+    <serviceTask id="tsk_alte_log_alert" name="Log Alert to&#10;Stock Alert History">
+      <incoming>sf_alte_log</incoming>
+      <outgoing>sf_alte_check_snooze</outgoing>
+    </serviceTask>
+
+    <exclusiveGateway id="gw_alte_snooze_active" name="Alert Currently&#10;Snoozed?">
+      <incoming>sf_alte_check_snooze</incoming>
+      <outgoing>sf_alte_snoozed</outgoing>
+      <outgoing>sf_alte_not_snoozed</outgoing>
+    </exclusiveGateway>
+
+    <serviceTask id="tsk_alte_snooze_handler" name="Hold Alert Until&#10;Snooze Period Expires">
+      <incoming>sf_alte_snoozed</incoming>
+      <outgoing>sf_alte_back_to_tick</outgoing>
+    </serviceTask>
+    <sequenceFlow id="sf_alte_back_to_tick" sourceRef="tsk_alte_snooze_handler" targetRef="evt_alte_data_tick" />
+
+    <serviceTask id="tsk_alte_send_to_delivery" name="Send to Delivery Service&#10;(channel routing)">
+      <incoming>sf_alte_not_snoozed</incoming>
+      <outgoing>sf_alte_delivered</outgoing>
+    </serviceTask>
+
+    <endEvent id="evt_alte_end" name="Alert Fired &amp;&#10;Queued for Delivery">
+      <incoming>sf_alte_delivered</incoming>
+    </endEvent>
+
+    <sequenceFlow id="sf_alte_register"          sourceRef="evt_alte_start"            targetRef="tsk_alte_register"          />
+    <sequenceFlow id="sf_alte_continuous_monitor" sourceRef="tsk_alte_register"         targetRef="evt_alte_data_tick"         />
+    <sequenceFlow id="sf_alte_eval_conditions"    sourceRef="evt_alte_data_tick"        targetRef="tsk_alte_evaluate_all"      />
+    <sequenceFlow id="sf_alte_any_triggered"      sourceRef="tsk_alte_evaluate_all"     targetRef="gw_alte_triggered"          />
+    <sequenceFlow id="sf_alte_yes_triggered"      sourceRef="gw_alte_triggered"         targetRef="tsk_alte_classify_trigger">
+      <conditionExpression>condition met</conditionExpression>
+    </sequenceFlow>
+    <sequenceFlow id="sf_alte_request_summary"    sourceRef="tsk_alte_classify_trigger" targetRef="tsk_alte_claude_summary"    />
+    <sequenceFlow id="sf_alte_build_payload"      sourceRef="tsk_alte_claude_summary"   targetRef="tsk_alte_fire_alert"        />
+    <sequenceFlow id="sf_alte_log"                sourceRef="tsk_alte_fire_alert"       targetRef="tsk_alte_log_alert"         />
+    <sequenceFlow id="sf_alte_check_snooze"       sourceRef="tsk_alte_log_alert"        targetRef="gw_alte_snooze_active"      />
+    <sequenceFlow id="sf_alte_snoozed"            sourceRef="gw_alte_snooze_active"     targetRef="tsk_alte_snooze_handler">
+      <conditionExpression>alert snoozed</conditionExpression>
+    </sequenceFlow>
+    <sequenceFlow id="sf_alte_not_snoozed"        sourceRef="gw_alte_snooze_active"     targetRef="tsk_alte_send_to_delivery">
+      <conditionExpression>not snoozed</conditionExpression>
+    </sequenceFlow>
+    <sequenceFlow id="sf_alte_delivered"          sourceRef="tsk_alte_send_to_delivery" targetRef="evt_alte_end"               />
+
+  </process>
+
+  <!-- ══════════════════════════
+       POOL: DELIVERY SERVICE
+       ══════════════════════════ -->
+  <process id="proc_alt_delivery" name="Delivery Service" isExecutable="false">
+
+    <startEvent id="evt_altd_start" name="Alert Payload Received">
+      <outgoing>sf_altd_route</outgoing>
+    </startEvent>
+
+    <serviceTask id="tsk_altd_format" name="Format Alert for&#10;Delivery Channel&#10;(rich notification, email HTML,&#10;push template)">
+      <incoming>sf_altd_route</incoming>
+      <outgoing>sf_altd_channel_split</outgoing>
+    </serviceTask>
+
+    <parallelGateway id="gw_altd_channels" name="Fan Out to&#10;Active Channels">
+      <incoming>sf_altd_channel_split</incoming>
+      <outgoing>sf_altd_in_app</outgoing>
+      <outgoing>sf_altd_email</outgoing>
+      <outgoing>sf_altd_push</outgoing>
+    </parallelGateway>
+
+    <serviceTask id="tsk_altd_in_app"  name="Deliver In-App&#10;Notification + Badge">
+      <incoming>sf_altd_in_app</incoming>  <outgoing>sf_altd_j1</outgoing>
+    </serviceTask>
+    <serviceTask id="tsk_altd_email"   name="Send Email Alert&#10;(if channel enabled)">
+      <incoming>sf_altd_email</incoming>   <outgoing>sf_altd_j2</outgoing>
+    </serviceTask>
+    <serviceTask id="tsk_altd_push"    name="Send Push Notification&#10;(mobile, if enabled)">
+      <incoming>sf_altd_push</incoming>    <outgoing>sf_altd_j3</outgoing>
+    </serviceTask>
+
+    <parallelGateway id="gw_altd_join" name="All Channels Sent">
+      <incoming>sf_altd_j1</incoming>
+      <incoming>sf_altd_j2</incoming>
+      <incoming>sf_altd_j3</incoming>
+      <outgoing>sf_altd_confirm</outgoing>
+    </parallelGateway>
+
+    <serviceTask id="tsk_altd_deliver" name="Confirm Delivery&#10;and Update Alert Status&#10;(sent → delivered → read)">
+      <incoming>sf_altd_confirm</incoming>
+      <outgoing>sf_altd_end</outgoing>
+    </serviceTask>
+
+    <endEvent id="evt_altd_end" name="Alert Delivered">
+      <incoming>sf_altd_end</incoming>
+    </endEvent>
+
+    <sequenceFlow id="sf_altd_route"         sourceRef="evt_altd_start"    targetRef="tsk_altd_format"    />
+    <sequenceFlow id="sf_altd_channel_split" sourceRef="tsk_altd_format"   targetRef="gw_altd_channels"   />
+    <sequenceFlow id="sf_altd_in_app"        sourceRef="gw_altd_channels"  targetRef="tsk_altd_in_app"    />
+    <sequenceFlow id="sf_altd_email"         sourceRef="gw_altd_channels"  targetRef="tsk_altd_email"     />
+    <sequenceFlow id="sf_altd_push"          sourceRef="gw_altd_channels"  targetRef="tsk_altd_push"      />
+    <sequenceFlow id="sf_altd_j1"            sourceRef="tsk_altd_in_app"   targetRef="gw_altd_join"       />
+    <sequenceFlow id="sf_altd_j2"            sourceRef="tsk_altd_email"    targetRef="gw_altd_join"       />
+    <sequenceFlow id="sf_altd_j3"            sourceRef="tsk_altd_push"     targetRef="gw_altd_join"       />
+    <sequenceFlow id="sf_altd_confirm"       sourceRef="gw_altd_join"      targetRef="tsk_altd_deliver"   />
+    <sequenceFlow id="sf_altd_end"           sourceRef="tsk_altd_deliver"  targetRef="evt_altd_end"       />
+
+  </process>
+
+  <!-- BPMN DI -->
+  <bpmndi:BPMNDiagram id="di_alerts">
+    <bpmndi:BPMNPlane id="plane_alerts" bpmnElement="collab_alerts">
+
+      <bpmndi:BPMNShape id="shape_pool_alt_investor" bpmnElement="pool_alt_investor" isHorizontal="true">
+        <omgdc:Bounds x="30" y="30"  width="1600" height="360" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_pool_alt_engine"   bpmnElement="pool_alt_engine"   isHorizontal="true">
+        <omgdc:Bounds x="30" y="410" width="1600" height="280" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_pool_alt_delivery" bpmnElement="pool_alt_delivery" isHorizontal="true">
+        <omgdc:Bounds x="30" y="710" width="1600" height="200" />
+      </bpmndi:BPMNShape>
+
+      <!-- Investor shapes -->
+      <bpmndi:BPMNShape id="shape_evt_alt_start"         bpmnElement="evt_alt_start">
+        <omgdc:Bounds x="80"  y="192" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_tsk_alt_choose_type"   bpmnElement="tsk_alt_choose_type">
+        <omgdc:Bounds x="160" y="100" width="180" height="220" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_tsk_alt_set_threshold" bpmnElement="tsk_alt_set_threshold">
+        <omgdc:Bounds x="380" y="160" width="160" height="100" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_tsk_alt_choose_channel" bpmnElement="tsk_alt_choose_channel">
+        <omgdc:Bounds x="580" y="160" width="160" height="100" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_tsk_alt_set_alert"     bpmnElement="tsk_alt_set_alert">
+        <omgdc:Bounds x="780" y="160" width="160" height="100" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_evt_alt_alert_fired"   bpmnElement="evt_alt_alert_fired">
+        <omgdc:Bounds x="990" y="193" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_tsk_alt_receive_alert" bpmnElement="tsk_alt_receive_alert">
+        <omgdc:Bounds x="1060" y="160" width="180" height="100" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_gw_alt_action"         bpmnElement="gw_alt_action" isMarkerVisible="true">
+        <omgdc:Bounds x="1280" y="193" width="50" height="50" />
+      </bpmndi:BPMNShape>
+
+      <!-- Engine shapes -->
+      <bpmndi:BPMNShape id="shape_tsk_alte_register"     bpmnElement="tsk_alte_register">
+        <omgdc:Bounds x="160" y="480" width="160" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_evt_alte_data_tick"    bpmnElement="evt_alte_data_tick">
+        <omgdc:Bounds x="370" y="513" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_tsk_alte_evaluate_all" bpmnElement="tsk_alte_evaluate_all">
+        <omgdc:Bounds x="450" y="480" width="160" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_gw_alte_triggered"     bpmnElement="gw_alte_triggered" isMarkerVisible="true">
+        <omgdc:Bounds x="660" y="513" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_tsk_alte_classify_trigger" bpmnElement="tsk_alte_classify_trigger">
+        <omgdc:Bounds x="760" y="480" width="160" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_tsk_alte_claude_summary"  bpmnElement="tsk_alte_claude_summary">
+        <omgdc:Bounds x="960" y="480" width="160" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_tsk_alte_fire_alert"      bpmnElement="tsk_alte_fire_alert">
+        <omgdc:Bounds x="1160" y="480" width="160" height="80" />
+      </bpmndi:BPMNShape>
+
+      <!-- Delivery shapes -->
+      <bpmndi:BPMNShape id="shape_tsk_altd_format"       bpmnElement="tsk_altd_format">
+        <omgdc:Bounds x="160" y="780" width="160" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_gw_altd_channels"      bpmnElement="gw_altd_channels">
+        <omgdc:Bounds x="370" y="798" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_tsk_altd_in_app"       bpmnElement="tsk_altd_in_app">
+        <omgdc:Bounds x="470" y="730" width="160" height="60" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_tsk_altd_email"        bpmnElement="tsk_altd_email">
+        <omgdc:Bounds x="470" y="800" width="160" height="60" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_tsk_altd_push"         bpmnElement="tsk_altd_push">
+        <omgdc:Bounds x="470" y="870" width="160" height="60" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_gw_altd_join"          bpmnElement="gw_altd_join">
+        <omgdc:Bounds x="680" y="798" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_tsk_altd_deliver"      bpmnElement="tsk_altd_deliver">
+        <omgdc:Bounds x="780" y="780" width="160" height="80" />
+      </bpmndi:BPMNShape>
+
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+
+</definitions>

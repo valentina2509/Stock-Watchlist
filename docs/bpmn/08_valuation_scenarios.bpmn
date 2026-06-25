@@ -1,0 +1,448 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<definitions xmlns="http://www.omg.org/spec/BPMN/20100524/MODEL"
+             xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+             xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI"
+             xmlns:omgdc="http://www.omg.org/spec/DD/20100524/DC"
+             xmlns:omgdi="http://www.omg.org/spec/DD/20100524/DI"
+             targetNamespace="http://stock-conviction-app/valuation-scenarios"
+             id="valuation_scenarios">
+
+  <!-- ═══════════════════════════════════════════════════════════════
+       PROCESS: Valuation & Scenario Analysis
+       Maps to PRD: §7.6 — VAL-01 through VAL-10
+       Methods: DCF, EV/EBITDA Multiples, P/E Relative, P/FCF
+       Scenarios: Bull (25%) / Base (50%) / Bear (25%)
+       ═══════════════════════════════════════════════════════════════ -->
+
+  <collaboration id="collab_valuation">
+    <participant id="pool_val_investor" name="Investor"               processRef="proc_val_investor"  />
+    <participant id="pool_val_engine"   name="Valuation Engine"       processRef="proc_val_engine"    />
+    <participant id="pool_val_data"     name="Financial Data Layer"   processRef="proc_val_data"      />
+
+    <messageFlow id="mf_val_method"      name="Method + Assumptions"   sourceRef="tsk_val_configure"       targetRef="tsk_vale_receive_config"  />
+    <messageFlow id="mf_val_results"     name="Scenario Results"        sourceRef="tsk_vale_deliver_results" targetRef="tsk_val_review_results"   />
+    <messageFlow id="mf_val_data_req"    name="Financial Data Request"  sourceRef="tsk_vale_prefill_data"    targetRef="evt_vald_start" />
+    <messageFlow id="mf_val_data_resp"   name="Financial Data"          sourceRef="tsk_vald_return_data"     targetRef="tsk_vale_prefill_data"    />
+    <messageFlow id="mf_val_save_target" name="Save Price Target"       sourceRef="tsk_val_save_targets"     targetRef="tsk_vale_update_watchlist" />
+    <messageFlow id="mf_val_ai_critique" name="Critique Request"        sourceRef="tsk_val_request_critique" targetRef="tsk_vale_claude_critique"  />
+    <messageFlow id="mf_val_critique_resp" name="Critique Response"     sourceRef="tsk_vale_claude_critique" targetRef="tsk_val_review_results"   />
+  </collaboration>
+
+  <!-- ══════════════════════════
+       POOL: INVESTOR
+       ══════════════════════════ -->
+  <process id="proc_val_investor" name="Investor — Valuation" isExecutable="false">
+
+    <startEvent id="evt_val_open" name="Investor Opens&#10;Valuation Module">
+      <outgoing>sf_val_open_method</outgoing>
+    </startEvent>
+
+    <exclusiveGateway id="gw_val_method" name="Valuation Method?">
+      <incoming>sf_val_open_method</incoming>
+      <outgoing>sf_val_method_dcf</outgoing>
+      <outgoing>sf_val_method_multiples</outgoing>
+      <outgoing>sf_val_method_relative</outgoing>
+    </exclusiveGateway>
+
+    <!-- DCF Path -->
+    <userTask id="tsk_val_dcf_assumptions" name="Set DCF Assumptions&#10;(revenue growth rate, EBIT margin,&#10;WACC, terminal growth rate,&#10;tax rate, D&amp;A)">
+      <incoming>sf_val_method_dcf</incoming>
+      <outgoing>sf_val_dcf_to_scenarios</outgoing>
+    </userTask>
+
+    <!-- Multiples Path -->
+    <userTask id="tsk_val_multiples_method" name="Set Multiples Assumptions&#10;(NTM P/E, EV/EBITDA, EV/Revenue,&#10;P/FCF — vs. peer benchmarks)">
+      <incoming>sf_val_method_multiples</incoming>
+      <outgoing>sf_val_multi_to_scenarios</outgoing>
+    </userTask>
+
+    <!-- Relative P/E Path -->
+    <userTask id="tsk_val_relative_method" name="Set Relative Valuation&#10;(P/E discount/premium to&#10;sector historical average)">
+      <incoming>sf_val_method_relative</incoming>
+      <outgoing>sf_val_rel_to_scenarios</outgoing>
+    </userTask>
+
+    <!-- All paths merge to scenario definition -->
+    <userTask id="tsk_val_configure" name="Define Scenarios&#10;———————————————&#10;BULL: growth + multiple expansion&#10;BASE: consensus assumptions&#10;BEAR: miss + compression&#10;—&#10;Set probability weights&#10;(default: 25/50/25)">
+      <incoming>sf_val_dcf_to_scenarios</incoming>
+      <incoming>sf_val_multi_to_scenarios</incoming>
+      <incoming>sf_val_rel_to_scenarios</incoming>
+      <outgoing>sf_val_submit</outgoing>
+    </userTask>
+
+    <intermediateCatchEvent id="evt_val_results_ready" name="Scenario Results Ready">
+      <incoming>sf_val_submit</incoming>
+      <outgoing>sf_val_to_review</outgoing>
+      <messageEventDefinition />
+    </intermediateCatchEvent>
+
+    <userTask id="tsk_val_review_results" name="Review Scenario Results&#10;—————————————————&#10;• Bull / Base / Bear fair values&#10;• Probability-weighted FV&#10;• Upside / downside vs. current&#10;• Sensitivity table&#10;• Historical multiple chart">
+      <incoming>sf_val_to_review</incoming>
+      <outgoing>sf_val_review_action</outgoing>
+    </userTask>
+
+    <exclusiveGateway id="gw_val_review_action" name="Next Action?">
+      <incoming>sf_val_review_action</incoming>
+      <outgoing>sf_val_adjust_assumptions</outgoing>
+      <outgoing>sf_val_request_critique</outgoing>
+      <outgoing>sf_val_save_targets</outgoing>
+      <outgoing>sf_val_view_sensitivity</outgoing>
+      <outgoing>sf_val_done</outgoing>
+    </exclusiveGateway>
+
+    <!-- Adjust assumptions loop -->
+    <userTask id="tsk_val_adjust" name="Adjust Scenario Assumptions&#10;(update growth, margin, multiple)">
+      <incoming>sf_val_adjust_assumptions</incoming>
+      <outgoing>sf_val_readjust</outgoing>
+    </userTask>
+    <sequenceFlow id="sf_val_readjust" sourceRef="tsk_val_adjust" targetRef="tsk_val_configure" />
+
+    <!-- Request AI critique -->
+    <userTask id="tsk_val_request_critique" name="Ask Claude to Critique&#10;Model Assumptions&#10;(sensitivity + benchmarks)">
+      <incoming>sf_val_request_critique</incoming>
+      <outgoing>sf_val_critique_wait</outgoing>
+    </userTask>
+
+    <intermediateCatchEvent id="evt_val_critique_ready" name="Critique Ready">
+      <incoming>sf_val_critique_wait</incoming>
+      <outgoing>sf_val_critique_review</outgoing>
+      <messageEventDefinition />
+    </intermediateCatchEvent>
+
+    <userTask id="tsk_val_review_critique" name="Review AI Critique&#10;and Decide on Adjustments">
+      <incoming>sf_val_critique_review</incoming>
+      <outgoing>sf_val_post_critique</outgoing>
+    </userTask>
+    <sequenceFlow id="sf_val_post_critique" sourceRef="tsk_val_review_critique" targetRef="gw_val_review_action" />
+
+    <!-- Save price targets -->
+    <userTask id="tsk_val_save_targets" name="Save Scenario Targets&#10;to Watchlist&#10;(Bull / Base / Bear / Weighted FV)">
+      <incoming>sf_val_save_targets</incoming>
+      <outgoing>sf_val_targets_saved</outgoing>
+    </userTask>
+
+    <!-- View sensitivity -->
+    <userTask id="tsk_val_view_sensitivity" name="Explore Sensitivity Table&#10;(fair value vs. key input ranges)">
+      <incoming>sf_val_view_sensitivity</incoming>
+      <outgoing>sf_val_sensitivity_done</outgoing>
+    </userTask>
+    <sequenceFlow id="sf_val_sensitivity_done" sourceRef="tsk_val_view_sensitivity" targetRef="gw_val_review_action" />
+
+    <endEvent id="evt_val_targets_saved" name="Targets Saved to Watchlist">
+      <incoming>sf_val_targets_saved</incoming>
+    </endEvent>
+
+    <endEvent id="evt_val_done" name="Valuation Session Complete">
+      <incoming>sf_val_done</incoming>
+    </endEvent>
+
+    <sequenceFlow id="sf_val_open_method"         sourceRef="evt_val_open"               targetRef="gw_val_method"             />
+    <sequenceFlow id="sf_val_method_dcf"           sourceRef="gw_val_method"              targetRef="tsk_val_dcf_assumptions">
+      <conditionExpression>DCF</conditionExpression>
+    </sequenceFlow>
+    <sequenceFlow id="sf_val_method_multiples"     sourceRef="gw_val_method"              targetRef="tsk_val_multiples_method">
+      <conditionExpression>Multiples</conditionExpression>
+    </sequenceFlow>
+    <sequenceFlow id="sf_val_method_relative"      sourceRef="gw_val_method"              targetRef="tsk_val_relative_method">
+      <conditionExpression>Relative P/E</conditionExpression>
+    </sequenceFlow>
+    <sequenceFlow id="sf_val_dcf_to_scenarios"     sourceRef="tsk_val_dcf_assumptions"    targetRef="tsk_val_configure"         />
+    <sequenceFlow id="sf_val_multi_to_scenarios"   sourceRef="tsk_val_multiples_method"   targetRef="tsk_val_configure"         />
+    <sequenceFlow id="sf_val_rel_to_scenarios"     sourceRef="tsk_val_relative_method"    targetRef="tsk_val_configure"         />
+    <sequenceFlow id="sf_val_submit"               sourceRef="tsk_val_configure"          targetRef="evt_val_results_ready"     />
+    <sequenceFlow id="sf_val_to_review"            sourceRef="evt_val_results_ready"      targetRef="tsk_val_review_results"    />
+    <sequenceFlow id="sf_val_review_action"        sourceRef="tsk_val_review_results"     targetRef="gw_val_review_action"      />
+    <sequenceFlow id="sf_val_adjust_assumptions"   sourceRef="gw_val_review_action"       targetRef="tsk_val_adjust">
+      <conditionExpression>adjust assumptions</conditionExpression>
+    </sequenceFlow>
+    <sequenceFlow id="sf_val_request_critique"     sourceRef="gw_val_review_action"       targetRef="tsk_val_request_critique">
+      <conditionExpression>request AI critique</conditionExpression>
+    </sequenceFlow>
+    <sequenceFlow id="sf_val_save_targets"         sourceRef="gw_val_review_action"       targetRef="tsk_val_save_targets">
+      <conditionExpression>save targets</conditionExpression>
+    </sequenceFlow>
+    <sequenceFlow id="sf_val_view_sensitivity"     sourceRef="gw_val_review_action"       targetRef="tsk_val_view_sensitivity">
+      <conditionExpression>explore sensitivity</conditionExpression>
+    </sequenceFlow>
+    <sequenceFlow id="sf_val_done"                 sourceRef="gw_val_review_action"       targetRef="evt_val_done">
+      <conditionExpression>done</conditionExpression>
+    </sequenceFlow>
+    <sequenceFlow id="sf_val_critique_wait"        sourceRef="tsk_val_request_critique"   targetRef="evt_val_critique_ready"    />
+    <sequenceFlow id="sf_val_critique_review"      sourceRef="evt_val_critique_ready"     targetRef="tsk_val_review_critique"   />
+    <sequenceFlow id="sf_val_targets_saved"        sourceRef="tsk_val_save_targets"       targetRef="evt_val_targets_saved"     />
+
+  </process>
+
+  <!-- ══════════════════════════
+       POOL: VALUATION ENGINE
+       ══════════════════════════ -->
+  <process id="proc_val_engine" name="Valuation Engine" isExecutable="false">
+
+    <startEvent id="evt_vale_start" name="Config &amp; Assumptions&#10;Received">
+      <outgoing>sf_vale_prefill</outgoing>
+    </startEvent>
+
+    <serviceTask id="tsk_vale_receive_config" name="Receive &amp; Validate&#10;Model Configuration">
+      <incoming>sf_vale_prefill</incoming>
+      <outgoing>sf_vale_fetch_data</outgoing>
+    </serviceTask>
+
+    <serviceTask id="tsk_vale_prefill_data" name="Pre-fill with Consensus&#10;Analyst Estimates as Defaults">
+      <incoming>sf_vale_fetch_data</incoming>
+      <outgoing>sf_vale_parallel_scenarios</outgoing>
+    </serviceTask>
+
+    <!-- Run all three scenarios in parallel -->
+    <parallelGateway id="gw_vale_scenarios_split" name="Run Scenarios&#10;in Parallel">
+      <incoming>sf_vale_parallel_scenarios</incoming>
+      <outgoing>sf_vale_run_bull</outgoing>
+      <outgoing>sf_vale_run_base</outgoing>
+      <outgoing>sf_vale_run_bear</outgoing>
+    </parallelGateway>
+
+    <serviceTask id="tsk_vale_run_bull" name="Run BULL Scenario&#10;(high growth, margin expansion,&#10;multiple expansion)&#10;Prob: 25% (default)">
+      <incoming>sf_vale_run_bull</incoming>
+      <outgoing>sf_vale_join_bull</outgoing>
+    </serviceTask>
+
+    <serviceTask id="tsk_vale_run_base" name="Run BASE Scenario&#10;(consensus estimates,&#10;stable multiple)&#10;Prob: 50% (default)">
+      <incoming>sf_vale_run_base</incoming>
+      <outgoing>sf_vale_join_base</outgoing>
+    </serviceTask>
+
+    <serviceTask id="tsk_vale_run_bear" name="Run BEAR Scenario&#10;(miss + compression,&#10;deteriorating fundamentals)&#10;Prob: 25% (default)">
+      <incoming>sf_vale_run_bear</incoming>
+      <outgoing>sf_vale_join_bear</outgoing>
+    </serviceTask>
+
+    <parallelGateway id="gw_vale_scenarios_join" name="All Scenarios Complete">
+      <incoming>sf_vale_join_bull</incoming>
+      <incoming>sf_vale_join_base</incoming>
+      <incoming>sf_vale_join_bear</incoming>
+      <outgoing>sf_vale_compute_weighted</outgoing>
+    </parallelGateway>
+
+    <serviceTask id="tsk_vale_probability_weighted" name="Compute Probability-Weighted&#10;Fair Value&#10;(weighted avg of 3 scenarios)">
+      <incoming>sf_vale_compute_weighted</incoming>
+      <outgoing>sf_vale_upside_calc</outgoing>
+    </serviceTask>
+
+    <serviceTask id="tsk_vale_upside_calc" name="Calculate Upside / Downside&#10;vs. Current Market Price&#10;per Scenario &amp; Weighted FV">
+      <incoming>sf_vale_upside_calc</incoming>
+      <outgoing>sf_vale_sensitivity</outgoing>
+    </serviceTask>
+
+    <serviceTask id="tsk_vale_sensitivity" name="Build Sensitivity Table&#10;(FV across key input ranges:&#10;growth × multiple matrix)">
+      <incoming>sf_vale_sensitivity</incoming>
+      <outgoing>sf_vale_historical</outgoing>
+    </serviceTask>
+
+    <serviceTask id="tsk_vale_historical_mult" name="Fetch Historical Multiple&#10;Range Chart Data&#10;(where current price vs. history)">
+      <incoming>sf_vale_historical</incoming>
+      <outgoing>sf_vale_deliver</outgoing>
+    </serviceTask>
+
+    <serviceTask id="tsk_vale_deliver_results" name="Deliver Complete&#10;Valuation Package to UI">
+      <incoming>sf_vale_deliver</incoming>
+      <outgoing>sf_vale_await_targets</outgoing>
+    </serviceTask>
+
+    <!-- Await save-targets request or critique request.
+         eventBasedGateway MUST be followed by intermediateCatchEvent elements (BPMN 2.0 §13.2.1) -->
+    <eventBasedGateway id="gw_vale_await_action" name="Await Next Action">
+      <incoming>sf_vale_await_targets</incoming>
+      <outgoing>sf_vale_save_target_path</outgoing>
+      <outgoing>sf_vale_critique_path</outgoing>
+    </eventBasedGateway>
+
+    <!-- Catch: save-targets message arrives -->
+    <intermediateCatchEvent id="evt_vale_catch_save" name="Save Targets&#10;Request Received">
+      <incoming>sf_vale_save_target_path</incoming>
+      <outgoing>sf_vale_to_update_watchlist</outgoing>
+      <messageEventDefinition />
+    </intermediateCatchEvent>
+
+    <!-- Catch: critique message arrives -->
+    <intermediateCatchEvent id="evt_vale_catch_critique" name="Critique&#10;Request Received">
+      <incoming>sf_vale_critique_path</incoming>
+      <outgoing>sf_vale_to_claude_critique</outgoing>
+      <messageEventDefinition />
+    </intermediateCatchEvent>
+
+    <!-- Save targets path -->
+    <serviceTask id="tsk_vale_update_watchlist" name="Write Bull/Base/Bear Targets&#10;and Weighted FV to Watchlist">
+      <incoming>sf_vale_to_update_watchlist</incoming>
+      <outgoing>sf_vale_end_save</outgoing>
+    </serviceTask>
+
+    <!-- Claude critique path -->
+    <serviceTask id="tsk_vale_claude_critique" name="Claude: Critique Model&#10;Assumptions vs. Peer Benchmarks&#10;and Sensitivity Findings">
+      <incoming>sf_vale_to_claude_critique</incoming>
+      <outgoing>sf_vale_end_critique</outgoing>
+    </serviceTask>
+
+    <endEvent id="evt_vale_end_save"    name="Targets Saved">     <incoming>sf_vale_end_save</incoming>    </endEvent>
+    <endEvent id="evt_vale_end_critique" name="Critique Delivered"> <incoming>sf_vale_end_critique</incoming> </endEvent>
+
+    <sequenceFlow id="sf_vale_prefill"              sourceRef="evt_vale_start"                targetRef="tsk_vale_receive_config"       />
+    <sequenceFlow id="sf_vale_fetch_data"           sourceRef="tsk_vale_receive_config"        targetRef="tsk_vale_prefill_data"         />
+    <sequenceFlow id="sf_vale_parallel_scenarios"   sourceRef="tsk_vale_prefill_data"          targetRef="gw_vale_scenarios_split"       />
+    <sequenceFlow id="sf_vale_run_bull"             sourceRef="gw_vale_scenarios_split"        targetRef="tsk_vale_run_bull"             />
+    <sequenceFlow id="sf_vale_run_base"             sourceRef="gw_vale_scenarios_split"        targetRef="tsk_vale_run_base"             />
+    <sequenceFlow id="sf_vale_run_bear"             sourceRef="gw_vale_scenarios_split"        targetRef="tsk_vale_run_bear"             />
+    <sequenceFlow id="sf_vale_join_bull"            sourceRef="tsk_vale_run_bull"              targetRef="gw_vale_scenarios_join"        />
+    <sequenceFlow id="sf_vale_join_base"            sourceRef="tsk_vale_run_base"              targetRef="gw_vale_scenarios_join"        />
+    <sequenceFlow id="sf_vale_join_bear"            sourceRef="tsk_vale_run_bear"              targetRef="gw_vale_scenarios_join"        />
+    <sequenceFlow id="sf_vale_compute_weighted"     sourceRef="gw_vale_scenarios_join"         targetRef="tsk_vale_probability_weighted" />
+    <sequenceFlow id="sf_vale_upside_calc"          sourceRef="tsk_vale_probability_weighted"  targetRef="tsk_vale_upside_calc"          />
+    <sequenceFlow id="sf_vale_sensitivity"          sourceRef="tsk_vale_upside_calc"           targetRef="tsk_vale_sensitivity"          />
+    <sequenceFlow id="sf_vale_historical"           sourceRef="tsk_vale_sensitivity"           targetRef="tsk_vale_historical_mult"      />
+    <sequenceFlow id="sf_vale_deliver"              sourceRef="tsk_vale_historical_mult"        targetRef="tsk_vale_deliver_results"      />
+    <sequenceFlow id="sf_vale_await_targets"        sourceRef="tsk_vale_deliver_results"       targetRef="gw_vale_await_action"          />
+    <sequenceFlow id="sf_vale_save_target_path"     sourceRef="gw_vale_await_action"           targetRef="evt_vale_catch_save"           />
+    <sequenceFlow id="sf_vale_critique_path"        sourceRef="gw_vale_await_action"           targetRef="evt_vale_catch_critique"       />
+    <sequenceFlow id="sf_vale_to_update_watchlist"  sourceRef="evt_vale_catch_save"            targetRef="tsk_vale_update_watchlist"     />
+    <sequenceFlow id="sf_vale_to_claude_critique"   sourceRef="evt_vale_catch_critique"        targetRef="tsk_vale_claude_critique"      />
+    <sequenceFlow id="sf_vale_end_save"             sourceRef="tsk_vale_update_watchlist"      targetRef="evt_vale_end_save"             />
+    <sequenceFlow id="sf_vale_end_critique"         sourceRef="tsk_vale_claude_critique"       targetRef="evt_vale_end_critique"         />
+
+  </process>
+
+  <!-- ══════════════════════════
+       POOL: FINANCIAL DATA LAYER
+       ══════════════════════════ -->
+  <process id="proc_val_data" name="Financial Data Layer" isExecutable="false">
+
+    <startEvent id="evt_vald_start" name="Data Request">
+      <outgoing>sf_vald_parallel</outgoing>
+    </startEvent>
+
+    <parallelGateway id="gw_vald_split" name="Fetch in Parallel">
+      <incoming>sf_vald_parallel</incoming>
+      <outgoing>sf_vald_income</outgoing>
+      <outgoing>sf_vald_balance</outgoing>
+      <outgoing>sf_vald_cashflow</outgoing>
+      <outgoing>sf_vald_consensus</outgoing>
+      <outgoing>sf_vald_peers</outgoing>
+    </parallelGateway>
+
+    <serviceTask id="tsk_vald_income"    name="Fetch Income Statement&#10;(5yr historical)">
+      <incoming>sf_vald_income</incoming>    <outgoing>sf_vald_j1</outgoing>
+    </serviceTask>
+    <serviceTask id="tsk_vald_balance"   name="Fetch Balance Sheet&#10;(debt, cash, equity)">
+      <incoming>sf_vald_balance</incoming>   <outgoing>sf_vald_j2</outgoing>
+    </serviceTask>
+    <serviceTask id="tsk_vald_cashflow"  name="Fetch Cash Flow Statement&#10;(FCF, capex, D&amp;A)">
+      <incoming>sf_vald_cashflow</incoming>  <outgoing>sf_vald_j3</outgoing>
+    </serviceTask>
+    <serviceTask id="tsk_vald_consensus" name="Fetch Analyst Consensus&#10;(NTM estimates, targets)">
+      <incoming>sf_vald_consensus</incoming> <outgoing>sf_vald_j4</outgoing>
+    </serviceTask>
+    <serviceTask id="tsk_vald_peers"     name="Fetch Peer Multiples&#10;(sector benchmarks)">
+      <incoming>sf_vald_peers</incoming>     <outgoing>sf_vald_j5</outgoing>
+    </serviceTask>
+
+    <parallelGateway id="gw_vald_join" name="All Data Ready">
+      <incoming>sf_vald_j1</incoming>
+      <incoming>sf_vald_j2</incoming>
+      <incoming>sf_vald_j3</incoming>
+      <incoming>sf_vald_j4</incoming>
+      <incoming>sf_vald_j5</incoming>
+      <outgoing>sf_vald_return</outgoing>
+    </parallelGateway>
+
+    <serviceTask id="tsk_vald_return_data" name="Return Normalized&#10;Financial Dataset">
+      <incoming>sf_vald_return</incoming>
+      <outgoing>sf_vald_end</outgoing>
+    </serviceTask>
+
+    <endEvent id="evt_vald_end" name="Data Delivered">
+      <incoming>sf_vald_end</incoming>
+    </endEvent>
+
+    <sequenceFlow id="sf_vald_parallel"  sourceRef="evt_vald_start"       targetRef="gw_vald_split"          />
+    <sequenceFlow id="sf_vald_income"    sourceRef="gw_vald_split"         targetRef="tsk_vald_income"         />
+    <sequenceFlow id="sf_vald_balance"   sourceRef="gw_vald_split"         targetRef="tsk_vald_balance"        />
+    <sequenceFlow id="sf_vald_cashflow"  sourceRef="gw_vald_split"         targetRef="tsk_vald_cashflow"       />
+    <sequenceFlow id="sf_vald_consensus" sourceRef="gw_vald_split"         targetRef="tsk_vald_consensus"      />
+    <sequenceFlow id="sf_vald_peers"     sourceRef="gw_vald_split"         targetRef="tsk_vald_peers"          />
+    <sequenceFlow id="sf_vald_j1"        sourceRef="tsk_vald_income"        targetRef="gw_vald_join"            />
+    <sequenceFlow id="sf_vald_j2"        sourceRef="tsk_vald_balance"       targetRef="gw_vald_join"            />
+    <sequenceFlow id="sf_vald_j3"        sourceRef="tsk_vald_cashflow"      targetRef="gw_vald_join"            />
+    <sequenceFlow id="sf_vald_j4"        sourceRef="tsk_vald_consensus"     targetRef="gw_vald_join"            />
+    <sequenceFlow id="sf_vald_j5"        sourceRef="tsk_vald_peers"         targetRef="gw_vald_join"            />
+    <sequenceFlow id="sf_vald_return"    sourceRef="gw_vald_join"           targetRef="tsk_vald_return_data"    />
+    <sequenceFlow id="sf_vald_end"       sourceRef="tsk_vald_return_data"   targetRef="evt_vald_end"            />
+
+  </process>
+
+  <!-- BPMN DI -->
+  <bpmndi:BPMNDiagram id="di_valuation">
+    <bpmndi:BPMNPlane id="plane_valuation" bpmnElement="collab_valuation">
+
+      <bpmndi:BPMNShape id="shape_pool_val_investor" bpmnElement="pool_val_investor" isHorizontal="true">
+        <omgdc:Bounds x="30" y="30"  width="1600" height="320" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_pool_val_engine"   bpmnElement="pool_val_engine"   isHorizontal="true">
+        <omgdc:Bounds x="30" y="370" width="1600" height="360" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_pool_val_data"     bpmnElement="pool_val_data"     isHorizontal="true">
+        <omgdc:Bounds x="30" y="750" width="1600" height="200" />
+      </bpmndi:BPMNShape>
+
+      <!-- Investor shapes -->
+      <bpmndi:BPMNShape id="shape_evt_val_open"         bpmnElement="evt_val_open">
+        <omgdc:Bounds x="80"  y="152" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_gw_val_method"        bpmnElement="gw_val_method" isMarkerVisible="true">
+        <omgdc:Bounds x="156" y="148" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_tsk_val_dcf_assumptions" bpmnElement="tsk_val_dcf_assumptions">
+        <omgdc:Bounds x="250" y="50"  width="160" height="90" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_tsk_val_multiples_method" bpmnElement="tsk_val_multiples_method">
+        <omgdc:Bounds x="250" y="155" width="160" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_tsk_val_relative_method"  bpmnElement="tsk_val_relative_method">
+        <omgdc:Bounds x="250" y="250" width="160" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_tsk_val_configure"    bpmnElement="tsk_val_configure">
+        <omgdc:Bounds x="460" y="110" width="160" height="140" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_tsk_val_review_results" bpmnElement="tsk_val_review_results">
+        <omgdc:Bounds x="740" y="110" width="160" height="140" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_gw_val_review_action" bpmnElement="gw_val_review_action" isMarkerVisible="true">
+        <omgdc:Bounds x="950" y="158" width="50" height="50" />
+      </bpmndi:BPMNShape>
+
+      <!-- Engine shapes -->
+      <bpmndi:BPMNShape id="shape_tsk_vale_prefill_data"    bpmnElement="tsk_vale_prefill_data">
+        <omgdc:Bounds x="160" y="450" width="160" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_gw_vale_scenarios_split"  bpmnElement="gw_vale_scenarios_split">
+        <omgdc:Bounds x="370" y="465" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_tsk_vale_run_bull"         bpmnElement="tsk_vale_run_bull">
+        <omgdc:Bounds x="470" y="380" width="160" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_tsk_vale_run_base"         bpmnElement="tsk_vale_run_base">
+        <omgdc:Bounds x="470" y="480" width="160" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_tsk_vale_run_bear"         bpmnElement="tsk_vale_run_bear">
+        <omgdc:Bounds x="470" y="580" width="160" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_gw_vale_scenarios_join"   bpmnElement="gw_vale_scenarios_join">
+        <omgdc:Bounds x="680" y="465" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_tsk_vale_probability_weighted" bpmnElement="tsk_vale_probability_weighted">
+        <omgdc:Bounds x="780" y="450" width="160" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_tsk_vale_deliver_results" bpmnElement="tsk_vale_deliver_results">
+        <omgdc:Bounds x="1200" y="450" width="150" height="80" />
+      </bpmndi:BPMNShape>
+
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+
+</definitions>

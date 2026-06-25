@@ -1,0 +1,470 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<definitions xmlns="http://www.omg.org/spec/BPMN/20100524/MODEL"
+             xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+             xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI"
+             xmlns:omgdc="http://www.omg.org/spec/DD/20100524/DC"
+             xmlns:omgdi="http://www.omg.org/spec/DD/20100524/DI"
+             targetNamespace="http://stock-conviction-app/system-overview"
+             id="system_overview">
+
+  <!-- ═══════════════════════════════════════════════════════════════
+       PROCESS: System Overview — Collaboration Diagram
+       Maps to PRD: §3 Vision, §6 User Journey, §10 Architecture
+       ═══════════════════════════════════════════════════════════════ -->
+
+  <!-- ── POOL: User ── -->
+  <collaboration id="collab_system_overview">
+
+    <participant id="pool_user" name="Investor / User" processRef="proc_user" />
+    <participant id="pool_platform" name="Stock Conviction Platform" processRef="proc_platform" />
+    <participant id="pool_ai" name="Claude AI Engine" processRef="proc_ai" />
+    <participant id="pool_data" name="External Data Feeds" processRef="proc_data" />
+
+    <!-- Message flows between pools -->
+    <messageFlow id="mf_user_screen" name="Screening Criteria" sourceRef="tsk_define_criteria" targetRef="tsk_run_screen" />
+    <messageFlow id="mf_platform_results" name="Discovery Results + Why Now" sourceRef="tsk_enrich_results" targetRef="tsk_browse_results" />
+    <messageFlow id="mf_user_query" name="Research Query" sourceRef="tsk_ask_claude" targetRef="tsk_process_query" />
+    <messageFlow id="mf_ai_response" name="AI Research Response" sourceRef="tsk_generate_response" targetRef="tsk_review_response" />
+    <messageFlow id="mf_platform_alert" name="Alert / Notification" sourceRef="tsk_send_alert" targetRef="tsk_receive_alert" />
+    <messageFlow id="mf_data_market" name="Market Data / Prices" sourceRef="tsk_feed_market" targetRef="tsk_ingest_data" />
+    <messageFlow id="mf_data_filings" name="SEC Filings / News" sourceRef="tsk_feed_filings" targetRef="tsk_ingest_data" />
+    <messageFlow id="mf_platform_data_req" name="Data Request" sourceRef="tsk_request_data" targetRef="tsk_feed_market" />
+
+  </collaboration>
+
+  <!-- ── PROCESS: User ── -->
+  <process id="proc_user" name="Investor Workflow" isExecutable="false">
+
+    <startEvent id="evt_user_start" name="Investor Opens Platform">
+      <outgoing>sf_start_discover</outgoing>
+    </startEvent>
+
+    <userTask id="tsk_define_criteria" name="Define Screening Criteria&#10;(sector, metrics, market cap)">
+      <incoming>sf_start_discover</incoming>
+      <outgoing>sf_criteria_browse</outgoing>
+    </userTask>
+
+    <userTask id="tsk_browse_results" name="Browse Discovery Results&#10;(Why Now score, conviction band)">
+      <incoming>sf_criteria_browse</incoming>
+      <outgoing>sf_browse_research</outgoing>
+    </userTask>
+
+    <userTask id="tsk_research_stock" name="Research Selected Stock&#10;(view thesis, score, valuation)">
+      <incoming>sf_browse_research</incoming>
+      <outgoing>sf_research_query</outgoing>
+    </userTask>
+
+    <userTask id="tsk_ask_claude" name="Ask AI Copilot&#10;(summarize filing, explain score)">
+      <incoming>sf_research_query</incoming>
+      <outgoing>sf_query_review</outgoing>
+    </userTask>
+
+    <userTask id="tsk_review_response" name="Review AI Research Response&#10;and update thesis">
+      <incoming>sf_query_review</incoming>
+      <outgoing>sf_review_conviction</outgoing>
+    </userTask>
+
+    <exclusiveGateway id="gw_conviction_check" name="Conviction ≥ 80?">
+      <incoming>sf_review_conviction</incoming>
+      <outgoing>sf_conviction_yes</outgoing>
+      <outgoing>sf_conviction_no</outgoing>
+    </exclusiveGateway>
+
+    <userTask id="tsk_set_alerts" name="Set Entry Conditions&#10;&amp; Alert Parameters">
+      <incoming>sf_conviction_yes</incoming>
+      <outgoing>sf_alerts_wait</outgoing>
+    </userTask>
+
+    <userTask id="tsk_continue_research" name="Continue Building Conviction&#10;(add evidence, update thesis)">
+      <incoming>sf_conviction_no</incoming>
+      <outgoing>sf_continue_query</outgoing>
+    </userTask>
+
+    <sequenceFlow id="sf_continue_query" sourceRef="tsk_continue_research" targetRef="tsk_ask_claude" />
+
+    <intermediateCatchEvent id="evt_alert_received" name="Alert Received">
+      <incoming>sf_alerts_wait</incoming>
+      <outgoing>sf_alert_action</outgoing>
+      <messageEventDefinition />
+    </intermediateCatchEvent>
+
+    <userTask id="tsk_receive_alert" name="Review Alert&#10;(catalyst, score change, entry signal)">
+      <incoming>sf_alert_action</incoming>
+      <outgoing>sf_alert_invest</outgoing>
+    </userTask>
+
+    <exclusiveGateway id="gw_invest" name="Enter Position?">
+      <incoming>sf_alert_invest</incoming>
+      <outgoing>sf_invest_yes</outgoing>
+      <outgoing>sf_invest_no</outgoing>
+    </exclusiveGateway>
+
+    <userTask id="tsk_enter_position" name="Mark as In Position&#10;(update watchlist state)">
+      <incoming>sf_invest_yes</incoming>
+      <outgoing>sf_monitor_position</outgoing>
+    </userTask>
+
+    <userTask id="tsk_monitor_position" name="Monitor Position&#10;(thesis drift, exit signals)">
+      <incoming>sf_monitor_position</incoming>
+      <outgoing>sf_exit_decision</outgoing>
+    </userTask>
+
+    <exclusiveGateway id="gw_exit" name="Exit Signal?">
+      <incoming>sf_exit_decision</incoming>
+      <outgoing>sf_exit_yes</outgoing>
+      <outgoing>sf_exit_no</outgoing>
+    </exclusiveGateway>
+
+    <sequenceFlow id="sf_exit_no" sourceRef="gw_exit" targetRef="tsk_monitor_position">
+      <conditionExpression>no exit signal</conditionExpression>
+    </sequenceFlow>
+
+    <userTask id="tsk_exit_position" name="Exit Position&#10;(capture lessons learned)">
+      <incoming>sf_exit_yes</incoming>
+      <outgoing>sf_to_end</outgoing>
+    </userTask>
+
+    <userTask id="tsk_revisit_thesis" name="Revisit Thesis&#10;(dismiss or continue watching)">
+      <incoming>sf_invest_no</incoming>
+      <outgoing>sf_revisit_continue</outgoing>
+    </userTask>
+
+    <sequenceFlow id="sf_revisit_continue" sourceRef="tsk_revisit_thesis" targetRef="tsk_research_stock" />
+
+    <endEvent id="evt_user_end" name="Research Cycle Complete">
+      <incoming>sf_to_end</incoming>
+    </endEvent>
+
+    <sequenceFlow id="sf_start_discover" sourceRef="evt_user_start" targetRef="tsk_define_criteria" />
+    <sequenceFlow id="sf_criteria_browse" sourceRef="tsk_define_criteria" targetRef="tsk_browse_results" />
+    <sequenceFlow id="sf_browse_research" sourceRef="tsk_browse_results" targetRef="tsk_research_stock" />
+    <sequenceFlow id="sf_research_query" sourceRef="tsk_research_stock" targetRef="tsk_ask_claude" />
+    <sequenceFlow id="sf_query_review" sourceRef="tsk_ask_claude" targetRef="tsk_review_response" />
+    <sequenceFlow id="sf_review_conviction" sourceRef="tsk_review_response" targetRef="gw_conviction_check" />
+    <sequenceFlow id="sf_conviction_yes" sourceRef="gw_conviction_check" targetRef="tsk_set_alerts">
+      <conditionExpression>conviction >= 80</conditionExpression>
+    </sequenceFlow>
+    <sequenceFlow id="sf_conviction_no" sourceRef="gw_conviction_check" targetRef="tsk_continue_research">
+      <conditionExpression>conviction &lt; 80</conditionExpression>
+    </sequenceFlow>
+    <sequenceFlow id="sf_alerts_wait" sourceRef="tsk_set_alerts" targetRef="evt_alert_received" />
+    <sequenceFlow id="sf_alert_action" sourceRef="evt_alert_received" targetRef="tsk_receive_alert" />
+    <sequenceFlow id="sf_alert_invest" sourceRef="tsk_receive_alert" targetRef="gw_invest" />
+    <sequenceFlow id="sf_invest_yes" sourceRef="gw_invest" targetRef="tsk_enter_position">
+      <conditionExpression>entry conditions met</conditionExpression>
+    </sequenceFlow>
+    <sequenceFlow id="sf_invest_no" sourceRef="gw_invest" targetRef="tsk_revisit_thesis">
+      <conditionExpression>not ready to invest</conditionExpression>
+    </sequenceFlow>
+    <sequenceFlow id="sf_monitor_position" sourceRef="tsk_enter_position" targetRef="tsk_monitor_position" />
+    <sequenceFlow id="sf_exit_decision" sourceRef="tsk_monitor_position" targetRef="gw_exit" />
+    <sequenceFlow id="sf_exit_yes" sourceRef="gw_exit" targetRef="tsk_exit_position">
+      <conditionExpression>exit signal triggered</conditionExpression>
+    </sequenceFlow>
+    <sequenceFlow id="sf_to_end" sourceRef="tsk_exit_position" targetRef="evt_user_end" />
+
+  </process>
+
+  <!-- ── PROCESS: Platform ── -->
+  <process id="proc_platform" name="Platform Core Services" isExecutable="false">
+
+    <startEvent id="evt_platform_start" name="Platform Listening">
+      <outgoing>sf_plat_start_screen</outgoing>
+    </startEvent>
+
+    <serviceTask id="tsk_run_screen" name="Run Screening Algorithm&#10;(5,000+ securities)">
+      <incoming>sf_plat_start_screen</incoming>
+      <outgoing>sf_screen_enrich</outgoing>
+    </serviceTask>
+
+    <serviceTask id="tsk_enrich_results" name="Enrich Results with&#10;Why Now + Conviction Data">
+      <incoming>sf_screen_enrich</incoming>
+      <outgoing>sf_enrich_score</outgoing>
+    </serviceTask>
+
+    <serviceTask id="tsk_calc_conviction" name="Calculate Conviction Scores&#10;(5-component model)">
+      <incoming>sf_enrich_score</incoming>
+      <outgoing>sf_score_monitor</outgoing>
+    </serviceTask>
+
+    <serviceTask id="tsk_monitor_thesis" name="Monitor Thesis Assumptions&#10;for Drift">
+      <incoming>sf_score_monitor</incoming>
+      <outgoing>sf_monitor_alert</outgoing>
+    </serviceTask>
+
+    <exclusiveGateway id="gw_alert_needed" name="Alert Condition Met?">
+      <incoming>sf_monitor_alert</incoming>
+      <outgoing>sf_alert_yes</outgoing>
+      <outgoing>sf_alert_no</outgoing>
+    </exclusiveGateway>
+
+    <serviceTask id="tsk_send_alert" name="Generate &amp; Send Alert&#10;with Claude Summary">
+      <incoming>sf_alert_yes</incoming>
+      <outgoing>sf_alert_loop</outgoing>
+    </serviceTask>
+
+    <serviceTask id="tsk_request_data" name="Request Fresh Market Data">
+      <incoming>sf_alert_no</incoming>
+      <outgoing>sf_data_req_loop</outgoing>
+    </serviceTask>
+
+    <serviceTask id="tsk_ingest_data" name="Ingest &amp; Normalize&#10;Market / Filing Data">
+      <incoming>sf_data_req_loop</incoming>
+      <outgoing>sf_ingest_update</outgoing>
+    </serviceTask>
+
+    <serviceTask id="tsk_update_scores" name="Update Scores &amp; Why Now&#10;Based on New Data">
+      <incoming>sf_ingest_update</incoming>
+      <outgoing>sf_update_loop</outgoing>
+    </serviceTask>
+
+    <endEvent id="evt_platform_loop" name="Monitoring Cycle Complete">
+      <incoming>sf_update_loop</incoming>
+      <incoming>sf_alert_loop</incoming>
+    </endEvent>
+
+    <sequenceFlow id="sf_plat_start_screen" sourceRef="evt_platform_start" targetRef="tsk_run_screen" />
+    <sequenceFlow id="sf_screen_enrich" sourceRef="tsk_run_screen" targetRef="tsk_enrich_results" />
+    <sequenceFlow id="sf_enrich_score" sourceRef="tsk_enrich_results" targetRef="tsk_calc_conviction" />
+    <sequenceFlow id="sf_score_monitor" sourceRef="tsk_calc_conviction" targetRef="tsk_monitor_thesis" />
+    <sequenceFlow id="sf_monitor_alert" sourceRef="tsk_monitor_thesis" targetRef="gw_alert_needed" />
+    <sequenceFlow id="sf_alert_yes" sourceRef="gw_alert_needed" targetRef="tsk_send_alert">
+      <conditionExpression>alert condition met</conditionExpression>
+    </sequenceFlow>
+    <sequenceFlow id="sf_alert_no" sourceRef="gw_alert_needed" targetRef="tsk_request_data">
+      <conditionExpression>no alert needed</conditionExpression>
+    </sequenceFlow>
+    <sequenceFlow id="sf_data_req_loop" sourceRef="tsk_request_data" targetRef="tsk_ingest_data" />
+    <sequenceFlow id="sf_ingest_update" sourceRef="tsk_ingest_data" targetRef="tsk_update_scores" />
+    <sequenceFlow id="sf_update_loop" sourceRef="tsk_update_scores" targetRef="evt_platform_loop" />
+    <sequenceFlow id="sf_alert_loop" sourceRef="tsk_send_alert" targetRef="evt_platform_loop" />
+
+  </process>
+
+  <!-- ── PROCESS: Claude AI Engine ── -->
+  <process id="proc_ai" name="Claude AI Engine" isExecutable="false">
+
+    <startEvent id="evt_ai_start" name="Research Request Received">
+      <outgoing>sf_ai_parse</outgoing>
+    </startEvent>
+
+    <serviceTask id="tsk_process_query" name="Parse Query Intent&#10;&amp; Load Context">
+      <incoming>sf_ai_parse</incoming>
+      <outgoing>sf_ai_fetch</outgoing>
+    </serviceTask>
+
+    <serviceTask id="tsk_fetch_context" name="Fetch Relevant Context&#10;(filings, scores, thesis, peers)">
+      <incoming>sf_ai_fetch</incoming>
+      <outgoing>sf_ai_generate</outgoing>
+    </serviceTask>
+
+    <serviceTask id="tsk_generate_response" name="Generate Research Response&#10;with Citations &amp; Confidence">
+      <incoming>sf_ai_generate</incoming>
+      <outgoing>sf_ai_store</outgoing>
+    </serviceTask>
+
+    <serviceTask id="tsk_store_research" name="Store Response in&#10;Stock Research History">
+      <incoming>sf_ai_store</incoming>
+      <outgoing>sf_ai_end</outgoing>
+    </serviceTask>
+
+    <endEvent id="evt_ai_end" name="Response Delivered">
+      <incoming>sf_ai_end</incoming>
+    </endEvent>
+
+    <sequenceFlow id="sf_ai_parse" sourceRef="evt_ai_start" targetRef="tsk_process_query" />
+    <sequenceFlow id="sf_ai_fetch" sourceRef="tsk_process_query" targetRef="tsk_fetch_context" />
+    <sequenceFlow id="sf_ai_generate" sourceRef="tsk_fetch_context" targetRef="tsk_generate_response" />
+    <sequenceFlow id="sf_ai_store" sourceRef="tsk_generate_response" targetRef="tsk_store_research" />
+    <sequenceFlow id="sf_ai_end" sourceRef="tsk_store_research" targetRef="evt_ai_end" />
+
+  </process>
+
+  <!-- ── PROCESS: External Data Feeds ── -->
+  <process id="proc_data" name="External Data Feeds" isExecutable="false">
+
+    <startEvent id="evt_data_start" name="Data Request or Schedule">
+      <outgoing>sf_data_route</outgoing>
+    </startEvent>
+
+    <parallelGateway id="gw_data_parallel" name="Fetch All Sources">
+      <incoming>sf_data_route</incoming>
+      <outgoing>sf_data_market</outgoing>
+      <outgoing>sf_data_filings</outgoing>
+      <outgoing>sf_data_news</outgoing>
+      <outgoing>sf_data_analyst</outgoing>
+    </parallelGateway>
+
+    <serviceTask id="tsk_feed_market" name="Market Data Feed&#10;(prices, volume, technicals)">
+      <incoming>sf_data_market</incoming>
+      <outgoing>sf_market_join</outgoing>
+    </serviceTask>
+
+    <serviceTask id="tsk_feed_filings" name="SEC Filings Feed&#10;(10-K, 10-Q, 8-K, Form 4)">
+      <incoming>sf_data_filings</incoming>
+      <outgoing>sf_filings_join</outgoing>
+    </serviceTask>
+
+    <serviceTask id="tsk_feed_news" name="News &amp; Sentiment Feed">
+      <incoming>sf_data_news</incoming>
+      <outgoing>sf_news_join</outgoing>
+    </serviceTask>
+
+    <serviceTask id="tsk_feed_analyst" name="Analyst Estimates Feed&#10;(consensus, ratings, targets)">
+      <incoming>sf_data_analyst</incoming>
+      <outgoing>sf_analyst_join</outgoing>
+    </serviceTask>
+
+    <parallelGateway id="gw_data_join" name="All Data Collected">
+      <incoming>sf_market_join</incoming>
+      <incoming>sf_filings_join</incoming>
+      <incoming>sf_news_join</incoming>
+      <incoming>sf_analyst_join</incoming>
+      <outgoing>sf_data_end</outgoing>
+    </parallelGateway>
+
+    <endEvent id="evt_data_end" name="Data Delivered">
+      <incoming>sf_data_end</incoming>
+    </endEvent>
+
+    <sequenceFlow id="sf_data_route" sourceRef="evt_data_start" targetRef="gw_data_parallel" />
+    <sequenceFlow id="sf_data_market" sourceRef="gw_data_parallel" targetRef="tsk_feed_market" />
+    <sequenceFlow id="sf_data_filings" sourceRef="gw_data_parallel" targetRef="tsk_feed_filings" />
+    <sequenceFlow id="sf_data_news" sourceRef="gw_data_parallel" targetRef="tsk_feed_news" />
+    <sequenceFlow id="sf_data_analyst" sourceRef="gw_data_parallel" targetRef="tsk_feed_analyst" />
+    <sequenceFlow id="sf_market_join" sourceRef="tsk_feed_market" targetRef="gw_data_join" />
+    <sequenceFlow id="sf_filings_join" sourceRef="tsk_feed_filings" targetRef="gw_data_join" />
+    <sequenceFlow id="sf_news_join" sourceRef="tsk_feed_news" targetRef="gw_data_join" />
+    <sequenceFlow id="sf_analyst_join" sourceRef="tsk_feed_analyst" targetRef="gw_data_join" />
+    <sequenceFlow id="sf_data_end" sourceRef="gw_data_join" targetRef="evt_data_end" />
+
+  </process>
+
+  <!-- ═══════════════════════════════════════════════════════════════
+       BPMN DIAGRAM INTERCHANGE (DI) — Visual Layout
+       ═══════════════════════════════════════════════════════════════ -->
+  <bpmndi:BPMNDiagram id="di_system_overview">
+    <bpmndi:BPMNPlane id="plane_system_overview" bpmnElement="collab_system_overview">
+
+      <!-- Pool: User -->
+      <bpmndi:BPMNShape id="shape_pool_user" bpmnElement="pool_user" isHorizontal="true">
+        <omgdc:Bounds x="30" y="30" width="1400" height="280" />
+      </bpmndi:BPMNShape>
+
+      <!-- Pool: Platform -->
+      <bpmndi:BPMNShape id="shape_pool_platform" bpmnElement="pool_platform" isHorizontal="true">
+        <omgdc:Bounds x="30" y="330" width="1400" height="200" />
+      </bpmndi:BPMNShape>
+
+      <!-- Pool: AI Engine -->
+      <bpmndi:BPMNShape id="shape_pool_ai" bpmnElement="pool_ai" isHorizontal="true">
+        <omgdc:Bounds x="30" y="550" width="1400" height="160" />
+      </bpmndi:BPMNShape>
+
+      <!-- Pool: Data Feeds -->
+      <bpmndi:BPMNShape id="shape_pool_data" bpmnElement="pool_data" isHorizontal="true">
+        <omgdc:Bounds x="30" y="730" width="1400" height="180" />
+      </bpmndi:BPMNShape>
+
+      <!-- User Process shapes -->
+      <bpmndi:BPMNShape id="shape_evt_user_start" bpmnElement="evt_user_start">
+        <omgdc:Bounds x="80" y="145" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_tsk_define_criteria" bpmnElement="tsk_define_criteria">
+        <omgdc:Bounds x="160" y="120" width="120" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_tsk_browse_results" bpmnElement="tsk_browse_results">
+        <omgdc:Bounds x="320" y="120" width="120" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_tsk_research_stock" bpmnElement="tsk_research_stock">
+        <omgdc:Bounds x="480" y="120" width="120" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_tsk_ask_claude" bpmnElement="tsk_ask_claude">
+        <omgdc:Bounds x="640" y="120" width="120" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_tsk_review_response" bpmnElement="tsk_review_response">
+        <omgdc:Bounds x="800" y="120" width="120" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_gw_conviction_check" bpmnElement="gw_conviction_check" isMarkerVisible="true">
+        <omgdc:Bounds x="970" y="138" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_tsk_set_alerts" bpmnElement="tsk_set_alerts">
+        <omgdc:Bounds x="1060" y="40" width="120" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_tsk_continue_research" bpmnElement="tsk_continue_research">
+        <omgdc:Bounds x="1060" y="200" width="120" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_evt_alert_received" bpmnElement="evt_alert_received">
+        <omgdc:Bounds x="1222" y="60" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_tsk_receive_alert" bpmnElement="tsk_receive_alert">
+        <omgdc:Bounds x="1280" y="40" width="120" height="80" />
+      </bpmndi:BPMNShape>
+
+      <!-- Platform Process shapes -->
+      <bpmndi:BPMNShape id="shape_evt_platform_start" bpmnElement="evt_platform_start">
+        <omgdc:Bounds x="80" y="415" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_tsk_run_screen" bpmnElement="tsk_run_screen">
+        <omgdc:Bounds x="160" y="390" width="120" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_tsk_enrich_results" bpmnElement="tsk_enrich_results">
+        <omgdc:Bounds x="320" y="390" width="120" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_tsk_calc_conviction" bpmnElement="tsk_calc_conviction">
+        <omgdc:Bounds x="480" y="390" width="120" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_tsk_monitor_thesis" bpmnElement="tsk_monitor_thesis">
+        <omgdc:Bounds x="640" y="390" width="120" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_gw_alert_needed" bpmnElement="gw_alert_needed" isMarkerVisible="true">
+        <omgdc:Bounds x="810" y="408" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_tsk_send_alert" bpmnElement="tsk_send_alert">
+        <omgdc:Bounds x="900" y="390" width="120" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_tsk_request_data" bpmnElement="tsk_request_data">
+        <omgdc:Bounds x="900" y="490" width="120" height="60" />
+      </bpmndi:BPMNShape>
+
+      <!-- AI Process shapes -->
+      <bpmndi:BPMNShape id="shape_evt_ai_start" bpmnElement="evt_ai_start">
+        <omgdc:Bounds x="80" y="610" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_tsk_process_query" bpmnElement="tsk_process_query">
+        <omgdc:Bounds x="160" y="590" width="120" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_tsk_fetch_context" bpmnElement="tsk_fetch_context">
+        <omgdc:Bounds x="320" y="590" width="120" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_tsk_generate_response" bpmnElement="tsk_generate_response">
+        <omgdc:Bounds x="480" y="590" width="120" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_tsk_store_research" bpmnElement="tsk_store_research">
+        <omgdc:Bounds x="640" y="590" width="120" height="80" />
+      </bpmndi:BPMNShape>
+
+      <!-- Data Feed shapes -->
+      <bpmndi:BPMNShape id="shape_gw_data_parallel" bpmnElement="gw_data_parallel">
+        <omgdc:Bounds x="200" y="808" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_tsk_feed_market" bpmnElement="tsk_feed_market">
+        <omgdc:Bounds x="310" y="750" width="120" height="60" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_tsk_feed_filings" bpmnElement="tsk_feed_filings">
+        <omgdc:Bounds x="460" y="750" width="120" height="60" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_tsk_feed_news" bpmnElement="tsk_feed_news">
+        <omgdc:Bounds x="610" y="750" width="120" height="60" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_tsk_feed_analyst" bpmnElement="tsk_feed_analyst">
+        <omgdc:Bounds x="760" y="750" width="120" height="60" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_gw_data_join" bpmnElement="gw_data_join">
+        <omgdc:Bounds x="940" y="808" width="50" height="50" />
+      </bpmndi:BPMNShape>
+
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+
+</definitions>

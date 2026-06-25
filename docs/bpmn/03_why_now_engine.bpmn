@@ -1,0 +1,330 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<definitions xmlns="http://www.omg.org/spec/BPMN/20100524/MODEL"
+             xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+             xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI"
+             xmlns:omgdc="http://www.omg.org/spec/DD/20100524/DC"
+             xmlns:omgdi="http://www.omg.org/spec/DD/20100524/DI"
+             targetNamespace="http://stock-conviction-app/why-now-engine"
+             id="why_now_engine">
+
+  <!-- ═══════════════════════════════════════════════════════════════
+       PROCESS: Why Now Engine
+       Maps to PRD: §7.2 — WHY-01 through WHY-07
+       Signal weights: Earnings 20%, Filing 15%, Analyst 15%,
+       Price Action 15%, Macro 15%, News 10%, Insider 10%
+       ═══════════════════════════════════════════════════════════════ -->
+
+  <collaboration id="collab_why_now">
+    <participant id="pool_why_engine" name="Why Now Engine" processRef="proc_why_engine" />
+    <participant id="pool_why_signals" name="Signal Sources" processRef="proc_why_signals" />
+    <participant id="pool_why_ai" name="Claude AI — Narrative Generator" processRef="proc_why_ai" />
+  </collaboration>
+
+  <!-- ── WHY NOW ENGINE PROCESS ── -->
+  <process id="proc_why_engine" name="Why Now Engine" isExecutable="false">
+
+    <startEvent id="evt_why_trigger" name="Why Now Calculation&#10;Triggered&#10;(daily schedule or new stock added)">
+      <outgoing>sf_why_trigger_init</outgoing>
+      <timerEventDefinition />
+    </startEvent>
+
+    <serviceTask id="tsk_why_load_stock" name="Load Stock Profile&#10;&amp; Last Known Signal State">
+      <incoming>sf_why_trigger_init</incoming>
+      <outgoing>sf_why_request_signals</outgoing>
+    </serviceTask>
+
+    <serviceTask id="tsk_why_request_all" name="Request All Signal Data&#10;from Signal Sources">
+      <incoming>sf_why_request_signals</incoming>
+      <outgoing>sf_why_parallel_split</outgoing>
+    </serviceTask>
+
+    <parallelGateway id="gw_why_parallel_fetch" name="Fetch All Signals&#10;Simultaneously">
+      <incoming>sf_why_parallel_split</incoming>
+      <outgoing>sf_why_fetch_earnings</outgoing>
+      <outgoing>sf_why_fetch_filings</outgoing>
+      <outgoing>sf_why_fetch_analyst</outgoing>
+      <outgoing>sf_why_fetch_price</outgoing>
+      <outgoing>sf_why_fetch_macro</outgoing>
+      <outgoing>sf_why_fetch_news</outgoing>
+      <outgoing>sf_why_fetch_insider</outgoing>
+    </parallelGateway>
+
+    <serviceTask id="tsk_why_collect_earnings" name="Collect Earnings Signal&#10;(days to earnings, guidance quality)&#10;Weight: 20%">
+      <incoming>sf_why_fetch_earnings</incoming>
+      <outgoing>sf_why_join_earnings</outgoing>
+    </serviceTask>
+
+    <serviceTask id="tsk_why_collect_filings" name="Collect Filing Signal&#10;(10-K/Q/8-K material events)&#10;Weight: 15%">
+      <incoming>sf_why_fetch_filings</incoming>
+      <outgoing>sf_why_join_filings</outgoing>
+    </serviceTask>
+
+    <serviceTask id="tsk_why_collect_analyst" name="Collect Analyst Signal&#10;(upgrades, initiations, target raises)&#10;Weight: 15%">
+      <incoming>sf_why_fetch_analyst</incoming>
+      <outgoing>sf_why_join_analyst</outgoing>
+    </serviceTask>
+
+    <serviceTask id="tsk_why_collect_price" name="Collect Price Action Signal&#10;(breakouts, volume surges, 52w high)&#10;Weight: 15%">
+      <incoming>sf_why_fetch_price</incoming>
+      <outgoing>sf_why_join_price</outgoing>
+    </serviceTask>
+
+    <serviceTask id="tsk_why_collect_macro" name="Collect Macro Signal&#10;(regime alignment, sector tailwinds)&#10;Weight: 15%">
+      <incoming>sf_why_fetch_macro</incoming>
+      <outgoing>sf_why_join_macro</outgoing>
+    </serviceTask>
+
+    <serviceTask id="tsk_why_collect_news" name="Collect News Sentiment&#10;(30-day positive shift)&#10;Weight: 10%">
+      <incoming>sf_why_fetch_news</incoming>
+      <outgoing>sf_why_join_news</outgoing>
+    </serviceTask>
+
+    <serviceTask id="tsk_why_collect_insider" name="Collect Insider Activity&#10;(material insider buys)&#10;Weight: 10%">
+      <incoming>sf_why_fetch_insider</incoming>
+      <outgoing>sf_why_join_insider</outgoing>
+    </serviceTask>
+
+    <parallelGateway id="gw_why_parallel_join" name="All Signals Collected">
+      <incoming>sf_why_join_earnings</incoming>
+      <incoming>sf_why_join_filings</incoming>
+      <incoming>sf_why_join_analyst</incoming>
+      <incoming>sf_why_join_price</incoming>
+      <incoming>sf_why_join_macro</incoming>
+      <incoming>sf_why_join_news</incoming>
+      <incoming>sf_why_join_insider</incoming>
+      <outgoing>sf_why_to_score</outgoing>
+    </parallelGateway>
+
+    <serviceTask id="tsk_why_compute_score" name="Compute Weighted Why Now Score&#10;(0–100, weighted by signal type)">
+      <incoming>sf_why_to_score</incoming>
+      <outgoing>sf_why_check_delta</outgoing>
+    </serviceTask>
+
+    <exclusiveGateway id="gw_why_score_delta" name="Score Changed&#10;≥ 10 points?">
+      <incoming>sf_why_check_delta</incoming>
+      <outgoing>sf_why_narrative_needed</outgoing>
+      <outgoing>sf_why_no_narrative</outgoing>
+    </exclusiveGateway>
+
+    <serviceTask id="tsk_why_request_narrative" name="Request Claude Narrative&#10;Generation">
+      <incoming>sf_why_narrative_needed</incoming>
+      <outgoing>sf_why_await_narrative</outgoing>
+    </serviceTask>
+
+    <intermediateCatchEvent id="evt_why_narrative_ready" name="Narrative Ready">
+      <incoming>sf_why_await_narrative</incoming>
+      <outgoing>sf_why_narrative_to_threshold</outgoing>
+      <messageEventDefinition />
+    </intermediateCatchEvent>
+
+    <exclusiveGateway id="gw_why_hot_window" name="Score ≥ 70?&#10;(Hot Window)">
+      <incoming>sf_why_narrative_to_threshold</incoming>
+      <incoming>sf_why_no_narrative</incoming>
+      <outgoing>sf_why_flag_hot</outgoing>
+      <outgoing>sf_why_normal</outgoing>
+    </exclusiveGateway>
+
+    <serviceTask id="tsk_why_flag_hot_window" name="Flag as Hot Window&#10;(badge, priority sort, alert trigger)">
+      <incoming>sf_why_flag_hot</incoming>
+      <outgoing>sf_why_hot_persist</outgoing>
+    </serviceTask>
+
+    <serviceTask id="tsk_why_persist_score" name="Persist Why Now Score&#10;to Historical Time Series">
+      <incoming>sf_why_hot_persist</incoming>
+      <incoming>sf_why_normal</incoming>
+      <outgoing>sf_why_check_pin</outgoing>
+    </serviceTask>
+
+    <exclusiveGateway id="gw_why_pinned_catalyst" name="User Has Pinned&#10;Catalyst?">
+      <incoming>sf_why_check_pin</incoming>
+      <outgoing>sf_why_eval_pinned</outgoing>
+      <outgoing>sf_why_no_pin</outgoing>
+    </exclusiveGateway>
+
+    <serviceTask id="tsk_why_eval_pinned" name="Evaluate Pinned Catalyst Status&#10;(fired / approaching / pending)">
+      <incoming>sf_why_eval_pinned</incoming>
+      <outgoing>sf_why_update_pin</outgoing>
+    </serviceTask>
+
+    <serviceTask id="tsk_why_update_card" name="Update Why Now Card&#10;in Watchlist &amp; Discovery UI">
+      <incoming>sf_why_update_pin</incoming>
+      <incoming>sf_why_no_pin</incoming>
+      <outgoing>sf_why_end</outgoing>
+    </serviceTask>
+
+    <endEvent id="evt_why_end" name="Why Now Update Complete">
+      <incoming>sf_why_end</incoming>
+    </endEvent>
+
+    <sequenceFlow id="sf_why_trigger_init" sourceRef="evt_why_trigger" targetRef="tsk_why_load_stock" />
+    <sequenceFlow id="sf_why_request_signals" sourceRef="tsk_why_load_stock" targetRef="tsk_why_request_all" />
+    <sequenceFlow id="sf_why_parallel_split" sourceRef="tsk_why_request_all" targetRef="gw_why_parallel_fetch" />
+    <sequenceFlow id="sf_why_fetch_earnings" sourceRef="gw_why_parallel_fetch" targetRef="tsk_why_collect_earnings" />
+    <sequenceFlow id="sf_why_fetch_filings" sourceRef="gw_why_parallel_fetch" targetRef="tsk_why_collect_filings" />
+    <sequenceFlow id="sf_why_fetch_analyst" sourceRef="gw_why_parallel_fetch" targetRef="tsk_why_collect_analyst" />
+    <sequenceFlow id="sf_why_fetch_price" sourceRef="gw_why_parallel_fetch" targetRef="tsk_why_collect_price" />
+    <sequenceFlow id="sf_why_fetch_macro" sourceRef="gw_why_parallel_fetch" targetRef="tsk_why_collect_macro" />
+    <sequenceFlow id="sf_why_fetch_news" sourceRef="gw_why_parallel_fetch" targetRef="tsk_why_collect_news" />
+    <sequenceFlow id="sf_why_fetch_insider" sourceRef="gw_why_parallel_fetch" targetRef="tsk_why_collect_insider" />
+    <sequenceFlow id="sf_why_join_earnings" sourceRef="tsk_why_collect_earnings" targetRef="gw_why_parallel_join" />
+    <sequenceFlow id="sf_why_join_filings" sourceRef="tsk_why_collect_filings" targetRef="gw_why_parallel_join" />
+    <sequenceFlow id="sf_why_join_analyst" sourceRef="tsk_why_collect_analyst" targetRef="gw_why_parallel_join" />
+    <sequenceFlow id="sf_why_join_price" sourceRef="tsk_why_collect_price" targetRef="gw_why_parallel_join" />
+    <sequenceFlow id="sf_why_join_macro" sourceRef="tsk_why_collect_macro" targetRef="gw_why_parallel_join" />
+    <sequenceFlow id="sf_why_join_news" sourceRef="tsk_why_collect_news" targetRef="gw_why_parallel_join" />
+    <sequenceFlow id="sf_why_join_insider" sourceRef="tsk_why_collect_insider" targetRef="gw_why_parallel_join" />
+    <sequenceFlow id="sf_why_to_score" sourceRef="gw_why_parallel_join" targetRef="tsk_why_compute_score" />
+    <sequenceFlow id="sf_why_check_delta" sourceRef="tsk_why_compute_score" targetRef="gw_why_score_delta" />
+    <sequenceFlow id="sf_why_narrative_needed" sourceRef="gw_why_score_delta" targetRef="tsk_why_request_narrative">
+      <conditionExpression>score delta >= 10</conditionExpression>
+    </sequenceFlow>
+    <sequenceFlow id="sf_why_no_narrative" sourceRef="gw_why_score_delta" targetRef="gw_why_hot_window">
+      <conditionExpression>score delta &lt; 10</conditionExpression>
+    </sequenceFlow>
+    <sequenceFlow id="sf_why_await_narrative" sourceRef="tsk_why_request_narrative" targetRef="evt_why_narrative_ready" />
+    <sequenceFlow id="sf_why_narrative_to_threshold" sourceRef="evt_why_narrative_ready" targetRef="gw_why_hot_window" />
+    <sequenceFlow id="sf_why_flag_hot" sourceRef="gw_why_hot_window" targetRef="tsk_why_flag_hot_window">
+      <conditionExpression>score >= 70</conditionExpression>
+    </sequenceFlow>
+    <sequenceFlow id="sf_why_normal" sourceRef="gw_why_hot_window" targetRef="tsk_why_persist_score">
+      <conditionExpression>score &lt; 70</conditionExpression>
+    </sequenceFlow>
+    <sequenceFlow id="sf_why_hot_persist" sourceRef="tsk_why_flag_hot_window" targetRef="tsk_why_persist_score" />
+    <sequenceFlow id="sf_why_check_pin" sourceRef="tsk_why_persist_score" targetRef="gw_why_pinned_catalyst" />
+    <sequenceFlow id="sf_why_eval_pinned" sourceRef="gw_why_pinned_catalyst" targetRef="tsk_why_eval_pinned">
+      <conditionExpression>user has pinned catalyst</conditionExpression>
+    </sequenceFlow>
+    <sequenceFlow id="sf_why_no_pin" sourceRef="gw_why_pinned_catalyst" targetRef="tsk_why_update_card">
+      <conditionExpression>no pinned catalyst</conditionExpression>
+    </sequenceFlow>
+    <sequenceFlow id="sf_why_update_pin" sourceRef="tsk_why_eval_pinned" targetRef="tsk_why_update_card" />
+    <sequenceFlow id="sf_why_end" sourceRef="tsk_why_update_card" targetRef="evt_why_end" />
+
+  </process>
+
+  <!-- ── SIGNAL SOURCES PROCESS (collapsed) ── -->
+  <process id="proc_why_signals" name="Signal Sources" isExecutable="false">
+    <startEvent id="evt_sig_start" name="Signal Request">
+      <outgoing>sf_sig_start</outgoing>
+    </startEvent>
+    <serviceTask id="tsk_sig_deliver" name="Deliver Signal Data&#10;(earnings, filings, analyst,&#10;price, macro, news, insider)">
+      <incoming>sf_sig_start</incoming>
+      <outgoing>sf_sig_end</outgoing>
+    </serviceTask>
+    <endEvent id="evt_sig_end" name="Signals Delivered">
+      <incoming>sf_sig_end</incoming>
+    </endEvent>
+    <sequenceFlow id="sf_sig_start" sourceRef="evt_sig_start" targetRef="tsk_sig_deliver" />
+    <sequenceFlow id="sf_sig_end" sourceRef="tsk_sig_deliver" targetRef="evt_sig_end" />
+  </process>
+
+  <!-- ── CLAUDE AI NARRATIVE PROCESS ── -->
+  <process id="proc_why_ai" name="Claude AI — Why Now Narrative" isExecutable="false">
+
+    <startEvent id="evt_why_ai_start" name="Narrative Request&#10;Received">
+      <outgoing>sf_why_ai_start</outgoing>
+    </startEvent>
+
+    <serviceTask id="tsk_why_ai_load" name="Load Signal Breakdown&#10;&amp; Prior Narratives">
+      <incoming>sf_why_ai_start</incoming>
+      <outgoing>sf_why_ai_analyze</outgoing>
+    </serviceTask>
+
+    <serviceTask id="tsk_why_ai_analyze" name="Analyze Dominant Signals&#10;&amp; Identify Key Narrative Thread">
+      <incoming>sf_why_ai_analyze</incoming>
+      <outgoing>sf_why_ai_draft</outgoing>
+    </serviceTask>
+
+    <serviceTask id="tsk_why_ai_draft" name="Draft 3–5 Sentence&#10;Why Now Narrative">
+      <incoming>sf_why_ai_draft</incoming>
+      <outgoing>sf_why_ai_return</outgoing>
+    </serviceTask>
+
+    <endEvent id="evt_why_ai_end" name="Narrative Ready">
+      <incoming>sf_why_ai_return</incoming>
+    </endEvent>
+
+    <sequenceFlow id="sf_why_ai_start" sourceRef="evt_why_ai_start" targetRef="tsk_why_ai_load" />
+    <sequenceFlow id="sf_why_ai_analyze" sourceRef="tsk_why_ai_load" targetRef="tsk_why_ai_analyze" />
+    <sequenceFlow id="sf_why_ai_draft" sourceRef="tsk_why_ai_analyze" targetRef="tsk_why_ai_draft" />
+    <sequenceFlow id="sf_why_ai_return" sourceRef="tsk_why_ai_draft" targetRef="evt_why_ai_end" />
+
+  </process>
+
+  <!-- BPMN DI -->
+  <bpmndi:BPMNDiagram id="di_why_now">
+    <bpmndi:BPMNPlane id="plane_why_now" bpmnElement="collab_why_now">
+
+      <bpmndi:BPMNShape id="shape_pool_why_engine" bpmnElement="pool_why_engine" isHorizontal="true">
+        <omgdc:Bounds x="30" y="30" width="1600" height="480" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_pool_why_signals" bpmnElement="pool_why_signals" isHorizontal="true">
+        <omgdc:Bounds x="30" y="530" width="1600" height="120" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_pool_why_ai" bpmnElement="pool_why_ai" isHorizontal="true">
+        <omgdc:Bounds x="30" y="670" width="1600" height="160" />
+      </bpmndi:BPMNShape>
+
+      <!-- Why Now Engine shapes -->
+      <bpmndi:BPMNShape id="shape_evt_why_trigger" bpmnElement="evt_why_trigger">
+        <omgdc:Bounds x="80" y="232" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_tsk_why_load_stock" bpmnElement="tsk_why_load_stock">
+        <omgdc:Bounds x="160" y="210" width="120" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_tsk_why_request_all" bpmnElement="tsk_why_request_all">
+        <omgdc:Bounds x="320" y="210" width="120" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_gw_why_parallel_fetch" bpmnElement="gw_why_parallel_fetch">
+        <omgdc:Bounds x="490" y="225" width="50" height="50" />
+      </bpmndi:BPMNShape>
+
+      <!-- 7 signal collection tasks fanned out vertically -->
+      <bpmndi:BPMNShape id="shape_tsk_why_collect_earnings" bpmnElement="tsk_why_collect_earnings">
+        <omgdc:Bounds x="590" y="40" width="160" height="70" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_tsk_why_collect_filings" bpmnElement="tsk_why_collect_filings">
+        <omgdc:Bounds x="590" y="120" width="160" height="70" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_tsk_why_collect_analyst" bpmnElement="tsk_why_collect_analyst">
+        <omgdc:Bounds x="590" y="200" width="160" height="70" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_tsk_why_collect_price" bpmnElement="tsk_why_collect_price">
+        <omgdc:Bounds x="590" y="280" width="160" height="70" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_tsk_why_collect_macro" bpmnElement="tsk_why_collect_macro">
+        <omgdc:Bounds x="590" y="360" width="160" height="70" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_tsk_why_collect_news" bpmnElement="tsk_why_collect_news">
+        <omgdc:Bounds x="590" y="440" width="160" height="60" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_tsk_why_collect_insider" bpmnElement="tsk_why_collect_insider">
+        <omgdc:Bounds x="590" y="510" width="160" height="60" />
+      </bpmndi:BPMNShape>
+
+      <bpmndi:BPMNShape id="shape_gw_why_parallel_join" bpmnElement="gw_why_parallel_join">
+        <omgdc:Bounds x="800" y="225" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_tsk_why_compute_score" bpmnElement="tsk_why_compute_score">
+        <omgdc:Bounds x="890" y="210" width="130" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_gw_why_score_delta" bpmnElement="gw_why_score_delta" isMarkerVisible="true">
+        <omgdc:Bounds x="1070" y="225" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_tsk_why_request_narrative" bpmnElement="tsk_why_request_narrative">
+        <omgdc:Bounds x="1160" y="140" width="130" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_gw_why_hot_window" bpmnElement="gw_why_hot_window" isMarkerVisible="true">
+        <omgdc:Bounds x="1340" y="225" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_tsk_why_flag_hot_window" bpmnElement="tsk_why_flag_hot_window">
+        <omgdc:Bounds x="1430" y="140" width="130" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_tsk_why_persist_score" bpmnElement="tsk_why_persist_score">
+        <omgdc:Bounds x="1430" y="300" width="130" height="80" />
+      </bpmndi:BPMNShape>
+
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+
+</definitions>

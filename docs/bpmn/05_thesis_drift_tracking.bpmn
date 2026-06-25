@@ -1,0 +1,404 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<definitions xmlns="http://www.omg.org/spec/BPMN/20100524/MODEL"
+             xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+             xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI"
+             xmlns:omgdc="http://www.omg.org/spec/DD/20100524/DC"
+             xmlns:omgdi="http://www.omg.org/spec/DD/20100524/DI"
+             targetNamespace="http://stock-conviction-app/thesis-drift"
+             id="thesis_drift">
+
+  <!-- ═══════════════════════════════════════════════════════════════
+       PROCESS: Thesis Management & Drift Tracking
+       Maps to PRD: §7.5 — THX-01 through THX-08
+       Drift levels: Confirming / On Track / Diverging / Broken
+       ═══════════════════════════════════════════════════════════════ -->
+
+  <collaboration id="collab_thesis">
+    <participant id="pool_thesis_user" name="Investor" processRef="proc_thesis_user" />
+    <participant id="pool_thesis_monitor" name="Thesis Monitor Service" processRef="proc_thesis_monitor" />
+    <participant id="pool_thesis_ai" name="Claude AI — Thesis Analyst" processRef="proc_thesis_ai" />
+  </collaboration>
+
+  <!-- ── INVESTOR THESIS PROCESS ── -->
+  <process id="proc_thesis_user" name="Investor — Thesis Management" isExecutable="false">
+
+    <startEvent id="evt_thx_user_start" name="Investor Creates&#10;Investment Thesis">
+      <outgoing>sf_thx_start_choice</outgoing>
+    </startEvent>
+
+    <exclusiveGateway id="gw_thx_create_method" name="Creation Method?">
+      <incoming>sf_thx_start_choice</incoming>
+      <outgoing>sf_thx_manual_write</outgoing>
+      <outgoing>sf_thx_ai_assist</outgoing>
+    </exclusiveGateway>
+
+    <userTask id="tsk_thx_manual_thesis" name="Write Thesis Manually&#10;(statement, assumptions, catalysts,&#10;risks, time horizon, target price)">
+      <incoming>sf_thx_manual_write</incoming>
+      <outgoing>sf_thx_manual_to_submit</outgoing>
+    </userTask>
+
+    <userTask id="tsk_thx_ai_draft_request" name="Request AI-Assisted&#10;Thesis Draft from Claude">
+      <incoming>sf_thx_ai_assist</incoming>
+      <outgoing>sf_thx_await_draft</outgoing>
+    </userTask>
+
+    <intermediateCatchEvent id="evt_thx_draft_ready" name="AI Draft Ready">
+      <incoming>sf_thx_await_draft</incoming>
+      <outgoing>sf_thx_review_draft</outgoing>
+      <messageEventDefinition />
+    </intermediateCatchEvent>
+
+    <userTask id="tsk_thx_review_edit_draft" name="Review &amp; Edit&#10;AI-Generated Thesis Draft">
+      <incoming>sf_thx_review_draft</incoming>
+      <outgoing>sf_thx_draft_to_submit</outgoing>
+    </userTask>
+
+    <userTask id="tsk_thx_submit_thesis" name="Submit Thesis&#10;(system extracts monitored metrics)">
+      <incoming>sf_thx_manual_to_submit</incoming>
+      <incoming>sf_thx_draft_to_submit</incoming>
+      <outgoing>sf_thx_submitted</outgoing>
+    </userTask>
+
+    <!-- Monitoring phase: user sees drift updates over time -->
+    <intermediateCatchEvent id="evt_thx_drift_event" name="Drift Alert&#10;Received">
+      <incoming>sf_thx_submitted</incoming>
+      <outgoing>sf_thx_review_drift</outgoing>
+      <messageEventDefinition />
+    </intermediateCatchEvent>
+
+    <userTask id="tsk_thx_review_drift_report" name="Review Thesis Drift Report&#10;(confirming / diverging / broken)">
+      <incoming>sf_thx_review_drift</incoming>
+      <outgoing>sf_thx_drift_decision</outgoing>
+    </userTask>
+
+    <exclusiveGateway id="gw_thx_drift_decision" name="Thesis Status?">
+      <incoming>sf_thx_drift_decision</incoming>
+      <outgoing>sf_thx_still_valid</outgoing>
+      <outgoing>sf_thx_update_needed</outgoing>
+      <outgoing>sf_thx_invalidated</outgoing>
+    </exclusiveGateway>
+
+    <!-- Thesis still valid: continue monitoring -->
+    <userTask id="tsk_thx_continue_monitor" name="Acknowledge Drift Report&#10;(thesis still valid, continue monitoring)">
+      <incoming>sf_thx_still_valid</incoming>
+      <outgoing>sf_thx_back_to_monitor</outgoing>
+    </userTask>
+    <sequenceFlow id="sf_thx_back_to_monitor" sourceRef="tsk_thx_continue_monitor" targetRef="evt_thx_drift_event" />
+
+    <!-- Thesis needs update: revise assumptions -->
+    <userTask id="tsk_thx_update_thesis" name="Update Thesis Assumptions&#10;(new version created with diff)">
+      <incoming>sf_thx_update_needed</incoming>
+      <outgoing>sf_thx_back_to_updated</outgoing>
+    </userTask>
+    <sequenceFlow id="sf_thx_back_to_updated" sourceRef="tsk_thx_update_thesis" targetRef="evt_thx_drift_event" />
+
+    <!-- Thesis invalidated: decide action -->
+    <exclusiveGateway id="gw_thx_invalidated_action" name="Action on&#10;Invalidated Thesis?">
+      <incoming>sf_thx_invalidated</incoming>
+      <outgoing>sf_thx_downgrade</outgoing>
+      <outgoing>sf_thx_exit_research</outgoing>
+    </exclusiveGateway>
+
+    <userTask id="tsk_thx_downgrade_conviction" name="Downgrade Conviction&#10;(reduce watchlist state)">
+      <incoming>sf_thx_downgrade</incoming>
+      <outgoing>sf_thx_downgrade_end</outgoing>
+    </userTask>
+
+    <userTask id="tsk_thx_exit_and_postmortem" name="Exit Position /&#10;Remove from Watchlist&#10;+ Capture Lessons Learned">
+      <incoming>sf_thx_exit_research</incoming>
+      <outgoing>sf_thx_postmortem_end</outgoing>
+    </userTask>
+
+    <endEvent id="evt_thx_downgraded" name="Conviction Downgraded">
+      <incoming>sf_thx_downgrade_end</incoming>
+    </endEvent>
+
+    <endEvent id="evt_thx_exited" name="Position Exited&#10;/ Research Closed">
+      <incoming>sf_thx_postmortem_end</incoming>
+    </endEvent>
+
+    <sequenceFlow id="sf_thx_start_choice" sourceRef="evt_thx_user_start" targetRef="gw_thx_create_method" />
+    <sequenceFlow id="sf_thx_manual_write" sourceRef="gw_thx_create_method" targetRef="tsk_thx_manual_thesis">
+      <conditionExpression>manual entry</conditionExpression>
+    </sequenceFlow>
+    <sequenceFlow id="sf_thx_ai_assist" sourceRef="gw_thx_create_method" targetRef="tsk_thx_ai_draft_request">
+      <conditionExpression>AI-assisted</conditionExpression>
+    </sequenceFlow>
+    <sequenceFlow id="sf_thx_await_draft" sourceRef="tsk_thx_ai_draft_request" targetRef="evt_thx_draft_ready" />
+    <sequenceFlow id="sf_thx_review_draft" sourceRef="evt_thx_draft_ready" targetRef="tsk_thx_review_edit_draft" />
+    <sequenceFlow id="sf_thx_manual_to_submit" sourceRef="tsk_thx_manual_thesis" targetRef="tsk_thx_submit_thesis" />
+    <sequenceFlow id="sf_thx_draft_to_submit" sourceRef="tsk_thx_review_edit_draft" targetRef="tsk_thx_submit_thesis" />
+    <sequenceFlow id="sf_thx_submitted" sourceRef="tsk_thx_submit_thesis" targetRef="evt_thx_drift_event" />
+    <sequenceFlow id="sf_thx_review_drift" sourceRef="evt_thx_drift_event" targetRef="tsk_thx_review_drift_report" />
+    <sequenceFlow id="sf_thx_drift_decision" sourceRef="tsk_thx_review_drift_report" targetRef="gw_thx_drift_decision" />
+    <sequenceFlow id="sf_thx_still_valid" sourceRef="gw_thx_drift_decision" targetRef="tsk_thx_continue_monitor">
+      <conditionExpression>thesis on track or confirming</conditionExpression>
+    </sequenceFlow>
+    <sequenceFlow id="sf_thx_update_needed" sourceRef="gw_thx_drift_decision" targetRef="tsk_thx_update_thesis">
+      <conditionExpression>thesis diverging — update needed</conditionExpression>
+    </sequenceFlow>
+    <sequenceFlow id="sf_thx_invalidated" sourceRef="gw_thx_drift_decision" targetRef="gw_thx_invalidated_action">
+      <conditionExpression>thesis broken / invalidated</conditionExpression>
+    </sequenceFlow>
+    <sequenceFlow id="sf_thx_downgrade" sourceRef="gw_thx_invalidated_action" targetRef="tsk_thx_downgrade_conviction">
+      <conditionExpression>downgrade conviction</conditionExpression>
+    </sequenceFlow>
+    <sequenceFlow id="sf_thx_exit_research" sourceRef="gw_thx_invalidated_action" targetRef="tsk_thx_exit_and_postmortem">
+      <conditionExpression>exit position / close research</conditionExpression>
+    </sequenceFlow>
+    <sequenceFlow id="sf_thx_downgrade_end" sourceRef="tsk_thx_downgrade_conviction" targetRef="evt_thx_downgraded" />
+    <sequenceFlow id="sf_thx_postmortem_end" sourceRef="tsk_thx_exit_and_postmortem" targetRef="evt_thx_exited" />
+
+  </process>
+
+  <!-- ── THESIS MONITOR SERVICE ── -->
+  <process id="proc_thesis_monitor" name="Thesis Monitor Service" isExecutable="false">
+
+    <startEvent id="evt_thxm_start" name="Thesis Submitted /&#10;Monitoring Activated">
+      <outgoing>sf_thxm_extract</outgoing>
+    </startEvent>
+
+    <serviceTask id="tsk_thxm_extract_metrics" name="Extract Key Metrics&#10;to Monitor from Thesis&#10;(revenue growth, margin, FCF, debt)">
+      <incoming>sf_thxm_extract</incoming>
+      <outgoing>sf_thxm_set_params</outgoing>
+    </serviceTask>
+
+    <serviceTask id="tsk_thxm_set_params" name="Set Baseline Values&#10;&amp; Alert Thresholds per Metric">
+      <incoming>sf_thxm_set_params</incoming>
+      <outgoing>sf_thxm_schedule</outgoing>
+    </serviceTask>
+
+    <intermediateCatchEvent id="evt_thxm_schedule" name="Weekly Monitoring&#10;Cycle">
+      <incoming>sf_thxm_schedule</incoming>
+      <outgoing>sf_thxm_fetch_latest</outgoing>
+      <timerEventDefinition><timeCycle>R/P1W</timeCycle></timerEventDefinition>
+    </intermediateCatchEvent>
+
+    <serviceTask id="tsk_thxm_fetch_latest" name="Fetch Latest Data&#10;for All Monitored Metrics">
+      <incoming>sf_thxm_fetch_latest</incoming>
+      <outgoing>sf_thxm_compare</outgoing>
+    </serviceTask>
+
+    <serviceTask id="tsk_thxm_compare" name="Compare Current Data&#10;vs. Thesis Baseline Values">
+      <incoming>sf_thxm_compare</incoming>
+      <outgoing>sf_thxm_classify_drift</outgoing>
+    </serviceTask>
+
+    <serviceTask id="tsk_thxm_classify_drift" name="Classify Drift Level&#10;per Metric:&#10;Confirming / On Track /&#10;Diverging / Broken">
+      <incoming>sf_thxm_classify_drift</incoming>
+      <outgoing>sf_thxm_check_drift_level</outgoing>
+    </serviceTask>
+
+    <exclusiveGateway id="gw_thxm_drift_level" name="Overall Drift Level?">
+      <incoming>sf_thxm_check_drift_level</incoming>
+      <outgoing>sf_thxm_confirming</outgoing>
+      <outgoing>sf_thxm_on_track</outgoing>
+      <outgoing>sf_thxm_diverging</outgoing>
+      <outgoing>sf_thxm_broken</outgoing>
+    </exclusiveGateway>
+
+    <!-- Confirming -->
+    <serviceTask id="tsk_thxm_handle_confirming" name="Generate Confirming Report&#10;(data tracking ahead of thesis)&#10;Boost conviction score">
+      <incoming>sf_thxm_confirming</incoming>
+      <outgoing>sf_thxm_send_confirming</outgoing>
+    </serviceTask>
+
+    <!-- On Track -->
+    <serviceTask id="tsk_thxm_handle_on_track" name="Log On Track Status&#10;(no alert required)">
+      <incoming>sf_thxm_on_track</incoming>
+      <outgoing>sf_thxm_back_to_schedule</outgoing>
+    </serviceTask>
+    <sequenceFlow id="sf_thxm_back_to_schedule" sourceRef="tsk_thxm_handle_on_track" targetRef="evt_thxm_schedule" />
+
+    <!-- Diverging -->
+    <serviceTask id="tsk_thxm_handle_diverging" name="Generate Diverging Report&#10;(data 10–25% off thesis)&#10;Yellow alert: Thesis Check">
+      <incoming>sf_thxm_diverging</incoming>
+      <outgoing>sf_thxm_send_diverging</outgoing>
+    </serviceTask>
+
+    <!-- Broken -->
+    <serviceTask id="tsk_thxm_handle_broken" name="Generate Broken Report&#10;(core assumption violated)&#10;Red alert: Thesis Invalidated">
+      <incoming>sf_thxm_broken</incoming>
+      <outgoing>sf_thxm_send_broken</outgoing>
+    </serviceTask>
+
+    <serviceTask id="tsk_thxm_send_confirming_alert" name="Send Confirming Alert&#10;to Investor">
+      <incoming>sf_thxm_send_confirming</incoming>
+      <outgoing>sf_thxm_back_conf</outgoing>
+    </serviceTask>
+    <sequenceFlow id="sf_thxm_back_conf" sourceRef="tsk_thxm_send_confirming_alert" targetRef="evt_thxm_schedule" />
+
+    <serviceTask id="tsk_thxm_send_diverging_alert" name="Send Diverging Alert&#10;to Investor (Yellow)">
+      <incoming>sf_thxm_send_diverging</incoming>
+      <outgoing>sf_thxm_back_div</outgoing>
+    </serviceTask>
+    <sequenceFlow id="sf_thxm_back_div" sourceRef="tsk_thxm_send_diverging_alert" targetRef="evt_thxm_schedule" />
+
+    <serviceTask id="tsk_thxm_send_broken_alert" name="Send Broken Alert (Red)&#10;&amp; Request AI Analysis">
+      <incoming>sf_thxm_send_broken</incoming>
+      <outgoing>sf_thxm_broken_end</outgoing>
+    </serviceTask>
+
+    <endEvent id="evt_thxm_end" name="Thesis Monitoring&#10;Cycle Complete">
+      <incoming>sf_thxm_broken_end</incoming>
+    </endEvent>
+
+    <sequenceFlow id="sf_thxm_extract" sourceRef="evt_thxm_start" targetRef="tsk_thxm_extract_metrics" />
+    <sequenceFlow id="sf_thxm_set_params" sourceRef="tsk_thxm_extract_metrics" targetRef="tsk_thxm_set_params" />
+    <sequenceFlow id="sf_thxm_schedule" sourceRef="tsk_thxm_set_params" targetRef="evt_thxm_schedule" />
+    <sequenceFlow id="sf_thxm_fetch_latest" sourceRef="evt_thxm_schedule" targetRef="tsk_thxm_fetch_latest" />
+    <sequenceFlow id="sf_thxm_compare" sourceRef="tsk_thxm_fetch_latest" targetRef="tsk_thxm_compare" />
+    <sequenceFlow id="sf_thxm_classify_drift" sourceRef="tsk_thxm_compare" targetRef="tsk_thxm_classify_drift" />
+    <sequenceFlow id="sf_thxm_check_drift_level" sourceRef="tsk_thxm_classify_drift" targetRef="gw_thxm_drift_level" />
+    <sequenceFlow id="sf_thxm_confirming" sourceRef="gw_thxm_drift_level" targetRef="tsk_thxm_handle_confirming">
+      <conditionExpression>confirming</conditionExpression>
+    </sequenceFlow>
+    <sequenceFlow id="sf_thxm_on_track" sourceRef="gw_thxm_drift_level" targetRef="tsk_thxm_handle_on_track">
+      <conditionExpression>on track</conditionExpression>
+    </sequenceFlow>
+    <sequenceFlow id="sf_thxm_diverging" sourceRef="gw_thxm_drift_level" targetRef="tsk_thxm_handle_diverging">
+      <conditionExpression>diverging</conditionExpression>
+    </sequenceFlow>
+    <sequenceFlow id="sf_thxm_broken" sourceRef="gw_thxm_drift_level" targetRef="tsk_thxm_handle_broken">
+      <conditionExpression>broken</conditionExpression>
+    </sequenceFlow>
+    <sequenceFlow id="sf_thxm_send_confirming" sourceRef="tsk_thxm_handle_confirming" targetRef="tsk_thxm_send_confirming_alert" />
+    <sequenceFlow id="sf_thxm_send_diverging" sourceRef="tsk_thxm_handle_diverging" targetRef="tsk_thxm_send_diverging_alert" />
+    <sequenceFlow id="sf_thxm_send_broken" sourceRef="tsk_thxm_handle_broken" targetRef="tsk_thxm_send_broken_alert" />
+    <sequenceFlow id="sf_thxm_broken_end" sourceRef="tsk_thxm_send_broken_alert" targetRef="evt_thxm_end" />
+
+  </process>
+
+  <!-- ── CLAUDE AI THESIS ANALYST ── -->
+  <process id="proc_thesis_ai" name="Claude AI — Thesis Analyst" isExecutable="false">
+
+    <startEvent id="evt_thxa_start" name="AI Thesis Request">
+      <outgoing>sf_thxa_start</outgoing>
+    </startEvent>
+
+    <exclusiveGateway id="gw_thxa_mode" name="Request Mode?">
+      <incoming>sf_thxa_start</incoming>
+      <outgoing>sf_thxa_draft</outgoing>
+      <outgoing>sf_thxa_drift_analysis</outgoing>
+      <outgoing>sf_thxa_devil_advocate</outgoing>
+    </exclusiveGateway>
+
+    <serviceTask id="tsk_thxa_draft_thesis" name="Draft Thesis from&#10;Available Data &amp; Filings">
+      <incoming>sf_thxa_draft</incoming>
+      <outgoing>sf_thxa_draft_respond</outgoing>
+    </serviceTask>
+
+    <serviceTask id="tsk_thxa_drift_analysis" name="Analyze Drift: Compare&#10;Current Data to&#10;Original Thesis Assumptions">
+      <incoming>sf_thxa_drift_analysis</incoming>
+      <outgoing>sf_thxa_analysis_respond</outgoing>
+    </serviceTask>
+
+    <serviceTask id="tsk_thxa_devil_advocate" name="Play Devil's Advocate&#10;(challenge thesis assumptions,&#10;surface hidden risks)">
+      <incoming>sf_thxa_devil_advocate</incoming>
+      <outgoing>sf_thxa_devil_respond</outgoing>
+    </serviceTask>
+
+    <serviceTask id="tsk_thxa_respond" name="Return Analysis&#10;with Confidence Level &amp; Citations">
+      <incoming>sf_thxa_draft_respond</incoming>
+      <incoming>sf_thxa_analysis_respond</incoming>
+      <incoming>sf_thxa_devil_respond</incoming>
+      <outgoing>sf_thxa_end</outgoing>
+    </serviceTask>
+
+    <endEvent id="evt_thxa_end" name="Analysis Complete">
+      <incoming>sf_thxa_end</incoming>
+    </endEvent>
+
+    <sequenceFlow id="sf_thxa_start" sourceRef="evt_thxa_start" targetRef="gw_thxa_mode" />
+    <sequenceFlow id="sf_thxa_draft" sourceRef="gw_thxa_mode" targetRef="tsk_thxa_draft_thesis">
+      <conditionExpression>draft thesis</conditionExpression>
+    </sequenceFlow>
+    <sequenceFlow id="sf_thxa_drift_analysis" sourceRef="gw_thxa_mode" targetRef="tsk_thxa_drift_analysis">
+      <conditionExpression>drift analysis</conditionExpression>
+    </sequenceFlow>
+    <sequenceFlow id="sf_thxa_devil_advocate" sourceRef="gw_thxa_mode" targetRef="tsk_thxa_devil_advocate">
+      <conditionExpression>devil's advocate</conditionExpression>
+    </sequenceFlow>
+    <sequenceFlow id="sf_thxa_draft_respond" sourceRef="tsk_thxa_draft_thesis" targetRef="tsk_thxa_respond" />
+    <sequenceFlow id="sf_thxa_analysis_respond" sourceRef="tsk_thxa_drift_analysis" targetRef="tsk_thxa_respond" />
+    <sequenceFlow id="sf_thxa_devil_respond" sourceRef="tsk_thxa_devil_advocate" targetRef="tsk_thxa_respond" />
+    <sequenceFlow id="sf_thxa_end" sourceRef="tsk_thxa_respond" targetRef="evt_thxa_end" />
+
+  </process>
+
+  <!-- BPMN DI -->
+  <bpmndi:BPMNDiagram id="di_thesis">
+    <bpmndi:BPMNPlane id="plane_thesis" bpmnElement="collab_thesis">
+
+      <bpmndi:BPMNShape id="shape_pool_thesis_user" bpmnElement="pool_thesis_user" isHorizontal="true">
+        <omgdc:Bounds x="30" y="30" width="1600" height="320" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_pool_thesis_monitor" bpmnElement="pool_thesis_monitor" isHorizontal="true">
+        <omgdc:Bounds x="30" y="370" width="1600" height="320" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_pool_thesis_ai" bpmnElement="pool_thesis_ai" isHorizontal="true">
+        <omgdc:Bounds x="30" y="710" width="1600" height="200" />
+      </bpmndi:BPMNShape>
+
+      <!-- User pool shapes -->
+      <bpmndi:BPMNShape id="shape_evt_thx_user_start" bpmnElement="evt_thx_user_start">
+        <omgdc:Bounds x="80" y="152" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_gw_thx_create_method" bpmnElement="gw_thx_create_method" isMarkerVisible="true">
+        <omgdc:Bounds x="156" y="148" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_tsk_thx_manual_thesis" bpmnElement="tsk_thx_manual_thesis">
+        <omgdc:Bounds x="250" y="60" width="160" height="100" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_tsk_thx_ai_draft_request" bpmnElement="tsk_thx_ai_draft_request">
+        <omgdc:Bounds x="250" y="200" width="160" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_tsk_thx_submit_thesis" bpmnElement="tsk_thx_submit_thesis">
+        <omgdc:Bounds x="460" y="120" width="140" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_evt_thx_drift_event" bpmnElement="evt_thx_drift_event">
+        <omgdc:Bounds x="650" y="148" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_tsk_thx_review_drift_report" bpmnElement="tsk_thx_review_drift_report">
+        <omgdc:Bounds x="730" y="120" width="160" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_gw_thx_drift_decision" bpmnElement="gw_thx_drift_decision" isMarkerVisible="true">
+        <omgdc:Bounds x="940" y="148" width="50" height="50" />
+      </bpmndi:BPMNShape>
+
+      <!-- Monitor pool shapes -->
+      <bpmndi:BPMNShape id="shape_evt_thxm_start" bpmnElement="evt_thxm_start">
+        <omgdc:Bounds x="80" y="512" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_tsk_thxm_extract_metrics" bpmnElement="tsk_thxm_extract_metrics">
+        <omgdc:Bounds x="160" y="490" width="140" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_evt_thxm_schedule" bpmnElement="evt_thxm_schedule">
+        <omgdc:Bounds x="350" y="512" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_tsk_thxm_fetch_latest" bpmnElement="tsk_thxm_fetch_latest">
+        <omgdc:Bounds x="430" y="490" width="130" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_tsk_thxm_compare" bpmnElement="tsk_thxm_compare">
+        <omgdc:Bounds x="600" y="490" width="130" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_tsk_thxm_classify_drift" bpmnElement="tsk_thxm_classify_drift">
+        <omgdc:Bounds x="770" y="490" width="130" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_gw_thxm_drift_level" bpmnElement="gw_thxm_drift_level" isMarkerVisible="true">
+        <omgdc:Bounds x="950" y="508" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_tsk_thxm_handle_confirming" bpmnElement="tsk_thxm_handle_confirming">
+        <omgdc:Bounds x="1050" y="390" width="160" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_tsk_thxm_handle_diverging" bpmnElement="tsk_thxm_handle_diverging">
+        <omgdc:Bounds x="1050" y="490" width="160" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_tsk_thxm_handle_broken" bpmnElement="tsk_thxm_handle_broken">
+        <omgdc:Bounds x="1050" y="590" width="160" height="80" />
+      </bpmndi:BPMNShape>
+
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+
+</definitions>

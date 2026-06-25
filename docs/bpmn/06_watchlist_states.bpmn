@@ -1,0 +1,455 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<definitions xmlns="http://www.omg.org/spec/BPMN/20100524/MODEL"
+             xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+             xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI"
+             xmlns:omgdc="http://www.omg.org/spec/DD/20100524/DC"
+             xmlns:omgdi="http://www.omg.org/spec/DD/20100524/DI"
+             targetNamespace="http://stock-conviction-app/watchlist-states"
+             id="watchlist_states">
+
+  <!-- ═══════════════════════════════════════════════════════════════
+       PROCESS: Watchlist State Machine
+       Maps to PRD: §7.4 — WLS-01 through WLS-08
+       States: Discovery → Research → Building Conviction →
+               High Conviction → Position → Monitoring → Exited
+
+       Remediation (BPMN-03 fix):
+       - Removed 5 illegal cross-pool sequenceFlows (lines 251, 254–257)
+       - Replaced with messageFlow in collaboration + boundary events in proc_wl_user
+       - Replaced with intermediateThrowEvents in proc_wl_platform
+       - Fixed duplicate sf_wlp_notify IDs
+       ═══════════════════════════════════════════════════════════════ -->
+
+  <collaboration id="collab_watchlist">
+    <participant id="pool_wl_user"     name="Investor"             processRef="proc_wl_user"     />
+    <participant id="pool_wl_platform" name="Platform State Logic" processRef="proc_wl_platform" />
+
+    <!-- BPMN-correct cross-pool communication via messageFlow -->
+    <messageFlow id="mf_wl_promote_to_research" name="Auto-Promote: Research"
+                 sourceRef="evt_wlp_throw_research" targetRef="bnd_wl_promote_research" />
+    <messageFlow id="mf_wl_promote_to_building" name="Auto-Promote: Building Conviction"
+                 sourceRef="evt_wlp_throw_building" targetRef="bnd_wl_promote_building" />
+    <messageFlow id="mf_wl_promote_to_high"     name="Auto-Promote: High Conviction"
+                 sourceRef="evt_wlp_throw_high"     targetRef="bnd_wl_promote_high"     />
+    <messageFlow id="mf_wl_force_exit_msg"      name="Force Exit"
+                 sourceRef="evt_wlp_throw_exit"     targetRef="bnd_wl_force_exit"       />
+  </collaboration>
+
+  <!-- ── INVESTOR WATCHLIST PROCESS ── -->
+  <process id="proc_wl_user" name="Investor — Watchlist States" isExecutable="false">
+
+    <startEvent id="evt_wl_start" name="Stock Added to&#10;Watchlist">
+      <outgoing>sf_wl_to_discovery</outgoing>
+    </startEvent>
+
+    <!-- ─── STATE 1: Discovery ─── -->
+    <userTask id="tsk_wl_discovery" name="STATE: DISCOVERY&#10;—————————————————&#10;View Why Now card&#10;Add notes&#10;Mark as 'Viewed'">
+      <incoming>sf_wl_to_discovery</incoming>
+      <outgoing>sf_wl_disc_action</outgoing>
+    </userTask>
+
+    <!-- Platform auto-promotes from Discovery → Research (interrupting boundary message) -->
+    <boundaryEvent id="bnd_wl_promote_research" name="Platform: Auto-Promote&#10;to Research" attachedToRef="tsk_wl_discovery">
+      <outgoing>sf_wl_bnd_to_research</outgoing>
+      <messageEventDefinition />
+    </boundaryEvent>
+
+    <exclusiveGateway id="gw_wl_from_discovery" name="From Discovery?">
+      <incoming>sf_wl_disc_action</incoming>
+      <outgoing>sf_wl_disc_to_research</outgoing>
+      <outgoing>sf_wl_disc_dismiss</outgoing>
+    </exclusiveGateway>
+
+    <!-- ─── STATE 2: Research ─── -->
+    <userTask id="tsk_wl_research" name="STATE: RESEARCH&#10;—————————————————&#10;Full copilot access&#10;Filing summaries&#10;Peer comparison&#10;Build thesis draft">
+      <incoming>sf_wl_disc_to_research</incoming>
+      <incoming>sf_wl_bnd_to_research</incoming>
+      <outgoing>sf_wl_research_action</outgoing>
+    </userTask>
+
+    <!-- Platform auto-promotes from Research → Building Conviction -->
+    <boundaryEvent id="bnd_wl_promote_building" name="Platform: Auto-Promote&#10;to Building Conviction" attachedToRef="tsk_wl_research">
+      <outgoing>sf_wl_bnd_to_building</outgoing>
+      <messageEventDefinition />
+    </boundaryEvent>
+
+    <exclusiveGateway id="gw_wl_from_research" name="From Research?">
+      <incoming>sf_wl_research_action</incoming>
+      <outgoing>sf_wl_research_to_building</outgoing>
+      <outgoing>sf_wl_research_demote</outgoing>
+      <outgoing>sf_wl_research_dismiss</outgoing>
+    </exclusiveGateway>
+
+    <!-- ─── STATE 3: Building Conviction ─── -->
+    <userTask id="tsk_wl_building" name="STATE: BUILDING CONVICTION&#10;—————————————————&#10;Conviction score 41–79&#10;Valuation scenarios&#10;Document full thesis&#10;Set monitoring parameters">
+      <incoming>sf_wl_research_to_building</incoming>
+      <incoming>sf_wl_bnd_to_building</incoming>
+      <outgoing>sf_wl_building_action</outgoing>
+    </userTask>
+
+    <!-- Platform auto-promotes from Building Conviction → High Conviction -->
+    <boundaryEvent id="bnd_wl_promote_high" name="Platform: Auto-Promote&#10;to High Conviction" attachedToRef="tsk_wl_building">
+      <outgoing>sf_wl_bnd_to_high</outgoing>
+      <messageEventDefinition />
+    </boundaryEvent>
+
+    <exclusiveGateway id="gw_wl_from_building" name="From Building?">
+      <incoming>sf_wl_building_action</incoming>
+      <outgoing>sf_wl_building_to_high</outgoing>
+      <outgoing>sf_wl_building_demote</outgoing>
+      <outgoing>sf_wl_building_dismiss</outgoing>
+    </exclusiveGateway>
+
+    <sequenceFlow id="sf_wl_building_demote" sourceRef="gw_wl_from_building" targetRef="tsk_wl_research">
+      <conditionExpression>demote to Research</conditionExpression>
+    </sequenceFlow>
+
+    <!-- ─── STATE 4: High Conviction ─── -->
+    <userTask id="tsk_wl_high_conviction" name="STATE: HIGH CONVICTION&#10;—————————————————&#10;Conviction score ≥ 80&#10;Set entry conditions&#10;Configure alerts&#10;Define position sizing">
+      <incoming>sf_wl_building_to_high</incoming>
+      <incoming>sf_wl_bnd_to_high</incoming>
+      <outgoing>sf_wl_high_action</outgoing>
+    </userTask>
+
+    <exclusiveGateway id="gw_wl_from_high" name="From High Conviction?">
+      <incoming>sf_wl_high_action</incoming>
+      <outgoing>sf_wl_high_to_position</outgoing>
+      <outgoing>sf_wl_high_demote</outgoing>
+      <outgoing>sf_wl_high_dismiss</outgoing>
+    </exclusiveGateway>
+
+    <sequenceFlow id="sf_wl_high_demote" sourceRef="gw_wl_from_high" targetRef="tsk_wl_building">
+      <conditionExpression>demote to Building Conviction</conditionExpression>
+    </sequenceFlow>
+
+    <!-- ─── STATE 5: In Position ─── -->
+    <userTask id="tsk_wl_position" name="STATE: IN POSITION&#10;—————————————————&#10;Track open position&#10;Thesis monitoring active&#10;Exit condition alerts on&#10;View P&amp;L vs. thesis target">
+      <incoming>sf_wl_high_to_position</incoming>
+      <outgoing>sf_wl_position_action</outgoing>
+    </userTask>
+
+    <!-- ─── STATE 6: Monitoring Position ─── -->
+    <userTask id="tsk_wl_monitoring" name="STATE: MONITORING POSITION&#10;—————————————————&#10;Active position, quiet period&#10;Drift alerts active&#10;Catalyst calendar visible&#10;Exit signals monitored">
+      <incoming>sf_wl_position_action</incoming>
+      <outgoing>sf_wl_monitoring_action</outgoing>
+    </userTask>
+
+    <!-- Platform can force-exit while monitoring -->
+    <boundaryEvent id="bnd_wl_force_exit" name="Platform: Force Exit&#10;(thesis invalidated)" attachedToRef="tsk_wl_monitoring">
+      <outgoing>sf_wl_bnd_to_exit</outgoing>
+      <messageEventDefinition />
+    </boundaryEvent>
+
+    <exclusiveGateway id="gw_wl_from_monitoring" name="Exit Signal?">
+      <incoming>sf_wl_monitoring_action</incoming>
+      <outgoing>sf_wl_monitoring_to_exit</outgoing>
+      <outgoing>sf_wl_monitoring_continue</outgoing>
+    </exclusiveGateway>
+
+    <sequenceFlow id="sf_wl_monitoring_continue" sourceRef="gw_wl_from_monitoring" targetRef="tsk_wl_monitoring">
+      <conditionExpression>no exit signal — continue monitoring</conditionExpression>
+    </sequenceFlow>
+
+    <!-- ─── STATE 7: Exited ─── -->
+    <userTask id="tsk_wl_exited" name="STATE: EXITED&#10;—————————————————&#10;Position closed&#10;Post-mortem review&#10;Lessons learned captured&#10;Research history archived">
+      <incoming>sf_wl_monitoring_to_exit</incoming>
+      <incoming>sf_wl_bnd_to_exit</incoming>
+      <outgoing>sf_wl_postmortem</outgoing>
+    </userTask>
+
+    <userTask id="tsk_wl_postmortem" name="Complete Post-Exit Review&#10;(returns, thesis accuracy,&#10;timing quality, lessons)">
+      <incoming>sf_wl_postmortem</incoming>
+      <outgoing>sf_wl_to_end</outgoing>
+    </userTask>
+
+    <!-- Dismissed flows go to end -->
+    <endEvent id="evt_wl_dismissed" name="Stock Dismissed&#10;(archived)">
+      <incoming>sf_wl_disc_dismiss</incoming>
+      <incoming>sf_wl_research_dismiss</incoming>
+      <incoming>sf_wl_building_dismiss</incoming>
+      <incoming>sf_wl_high_dismiss</incoming>
+    </endEvent>
+
+    <endEvent id="evt_wl_end" name="Research Lifecycle&#10;Complete">
+      <incoming>sf_wl_to_end</incoming>
+    </endEvent>
+
+    <sequenceFlow id="sf_wl_to_discovery"      sourceRef="evt_wl_start"          targetRef="tsk_wl_discovery"      />
+    <sequenceFlow id="sf_wl_disc_action"        sourceRef="tsk_wl_discovery"      targetRef="gw_wl_from_discovery"  />
+    <sequenceFlow id="sf_wl_disc_to_research"   sourceRef="gw_wl_from_discovery"  targetRef="tsk_wl_research">
+      <conditionExpression>promote to Research</conditionExpression>
+    </sequenceFlow>
+    <sequenceFlow id="sf_wl_disc_dismiss"       sourceRef="gw_wl_from_discovery"  targetRef="evt_wl_dismissed">
+      <conditionExpression>dismiss</conditionExpression>
+    </sequenceFlow>
+    <sequenceFlow id="sf_wl_bnd_to_research"    sourceRef="bnd_wl_promote_research" targetRef="tsk_wl_research"     />
+    <sequenceFlow id="sf_wl_research_action"    sourceRef="tsk_wl_research"       targetRef="gw_wl_from_research"   />
+    <sequenceFlow id="sf_wl_research_to_building" sourceRef="gw_wl_from_research" targetRef="tsk_wl_building">
+      <conditionExpression>promote to Building Conviction</conditionExpression>
+    </sequenceFlow>
+    <sequenceFlow id="sf_wl_research_demote"    sourceRef="gw_wl_from_research"   targetRef="tsk_wl_discovery">
+      <conditionExpression>demote to Discovery</conditionExpression>
+    </sequenceFlow>
+    <sequenceFlow id="sf_wl_research_dismiss"   sourceRef="gw_wl_from_research"   targetRef="evt_wl_dismissed">
+      <conditionExpression>dismiss</conditionExpression>
+    </sequenceFlow>
+    <sequenceFlow id="sf_wl_bnd_to_building"    sourceRef="bnd_wl_promote_building" targetRef="tsk_wl_building"    />
+    <sequenceFlow id="sf_wl_building_action"    sourceRef="tsk_wl_building"       targetRef="gw_wl_from_building"   />
+    <sequenceFlow id="sf_wl_building_to_high"   sourceRef="gw_wl_from_building"   targetRef="tsk_wl_high_conviction">
+      <conditionExpression>promote to High Conviction</conditionExpression>
+    </sequenceFlow>
+    <sequenceFlow id="sf_wl_building_dismiss"   sourceRef="gw_wl_from_building"   targetRef="evt_wl_dismissed">
+      <conditionExpression>dismiss</conditionExpression>
+    </sequenceFlow>
+    <sequenceFlow id="sf_wl_bnd_to_high"        sourceRef="bnd_wl_promote_high"   targetRef="tsk_wl_high_conviction" />
+    <sequenceFlow id="sf_wl_high_action"        sourceRef="tsk_wl_high_conviction" targetRef="gw_wl_from_high"      />
+    <sequenceFlow id="sf_wl_high_to_position"   sourceRef="gw_wl_from_high"       targetRef="tsk_wl_position">
+      <conditionExpression>open position</conditionExpression>
+    </sequenceFlow>
+    <sequenceFlow id="sf_wl_high_dismiss"       sourceRef="gw_wl_from_high"       targetRef="evt_wl_dismissed">
+      <conditionExpression>dismiss</conditionExpression>
+    </sequenceFlow>
+    <sequenceFlow id="sf_wl_position_action"    sourceRef="tsk_wl_position"       targetRef="tsk_wl_monitoring"     />
+    <sequenceFlow id="sf_wl_monitoring_action"  sourceRef="tsk_wl_monitoring"     targetRef="gw_wl_from_monitoring" />
+    <sequenceFlow id="sf_wl_monitoring_to_exit" sourceRef="gw_wl_from_monitoring" targetRef="tsk_wl_exited">
+      <conditionExpression>exit signal triggered</conditionExpression>
+    </sequenceFlow>
+    <sequenceFlow id="sf_wl_bnd_to_exit"        sourceRef="bnd_wl_force_exit"     targetRef="tsk_wl_exited"         />
+    <sequenceFlow id="sf_wl_postmortem"         sourceRef="tsk_wl_exited"         targetRef="tsk_wl_postmortem"     />
+    <sequenceFlow id="sf_wl_to_end"             sourceRef="tsk_wl_postmortem"     targetRef="evt_wl_end"            />
+
+  </process>
+
+  <!-- ── PLATFORM STATE LOGIC PROCESS ── -->
+  <process id="proc_wl_platform" name="Platform State Logic" isExecutable="false">
+
+    <startEvent id="evt_wlp_start" name="State Condition&#10;Evaluated (Continuous)">
+      <outgoing>sf_wlp_check</outgoing>
+    </startEvent>
+
+    <serviceTask id="tsk_wlp_check_conditions" name="Evaluate State Promotion&#10;Conditions Continuously:&#10;- Conviction score thresholds&#10;- Time in state&#10;- User activity signals">
+      <incoming>sf_wlp_check</incoming>
+      <outgoing>sf_wlp_decide</outgoing>
+    </serviceTask>
+
+    <exclusiveGateway id="gw_wlp_action" name="State Change Action?">
+      <incoming>sf_wlp_decide</incoming>
+      <outgoing>sf_wlp_promote</outgoing>
+      <outgoing>sf_wlp_auto_demote</outgoing>
+      <outgoing>sf_wlp_force_exit</outgoing>
+      <outgoing>sf_wlp_no_change</outgoing>
+    </exclusiveGateway>
+
+    <!-- Promote: determine which target state, then send message to user process -->
+    <serviceTask id="tsk_wlp_promote" name="Determine Promotion Target&#10;(based on conviction score band)&#10;Log transition with reason">
+      <incoming>sf_wlp_promote</incoming>
+      <outgoing>sf_wlp_promo_route</outgoing>
+    </serviceTask>
+
+    <exclusiveGateway id="gw_wlp_promo_target" name="Promote to Which State?">
+      <incoming>sf_wlp_promo_route</incoming>
+      <outgoing>sf_wlp_promo_research</outgoing>
+      <outgoing>sf_wlp_promo_building</outgoing>
+      <outgoing>sf_wlp_promo_high</outgoing>
+    </exclusiveGateway>
+
+    <!-- Message throw events: notify user process of which state to enter -->
+    <intermediateThrowEvent id="evt_wlp_throw_research" name="Send: Promote&#10;to Research">
+      <incoming>sf_wlp_promo_research</incoming>
+      <outgoing>sf_wlp_research_notify</outgoing>
+      <messageEventDefinition />
+    </intermediateThrowEvent>
+
+    <intermediateThrowEvent id="evt_wlp_throw_building" name="Send: Promote&#10;to Building Conviction">
+      <incoming>sf_wlp_promo_building</incoming>
+      <outgoing>sf_wlp_building_notify</outgoing>
+      <messageEventDefinition />
+    </intermediateThrowEvent>
+
+    <intermediateThrowEvent id="evt_wlp_throw_high" name="Send: Promote&#10;to High Conviction">
+      <incoming>sf_wlp_promo_high</incoming>
+      <outgoing>sf_wlp_high_notify</outgoing>
+      <messageEventDefinition />
+    </intermediateThrowEvent>
+
+    <serviceTask id="tsk_wlp_auto_demote" name="Auto-Demote State&#10;(conviction dropped below threshold)&#10;Log transition with reason">
+      <incoming>sf_wlp_auto_demote</incoming>
+      <outgoing>sf_wlp_notify_demote</outgoing>
+    </serviceTask>
+
+    <!-- Force exit: throw message to user process, then notify -->
+    <serviceTask id="tsk_wlp_force_exit" name="Force Exit State&#10;(thesis invalidated / user command)&#10;Archive all research">
+      <incoming>sf_wlp_force_exit</incoming>
+      <outgoing>sf_wlp_exit_throw</outgoing>
+    </serviceTask>
+
+    <intermediateThrowEvent id="evt_wlp_throw_exit" name="Send: Force Exit">
+      <incoming>sf_wlp_exit_throw</incoming>
+      <outgoing>sf_wlp_exit_notify</outgoing>
+      <messageEventDefinition />
+    </intermediateThrowEvent>
+
+    <!-- Notify user of state change (all paths converge here) -->
+    <serviceTask id="tsk_wlp_notify_user" name="Notify Investor of&#10;State Change + Reason">
+      <incoming>sf_wlp_research_notify</incoming>
+      <incoming>sf_wlp_building_notify</incoming>
+      <incoming>sf_wlp_high_notify</incoming>
+      <incoming>sf_wlp_notify_demote</incoming>
+      <incoming>sf_wlp_exit_notify</incoming>
+      <outgoing>sf_wlp_end</outgoing>
+    </serviceTask>
+
+    <endEvent id="evt_wlp_no_change" name="No Change">
+      <incoming>sf_wlp_no_change</incoming>
+    </endEvent>
+
+    <endEvent id="evt_wlp_end" name="State Updated">
+      <incoming>sf_wlp_end</incoming>
+    </endEvent>
+
+    <sequenceFlow id="sf_wlp_check"           sourceRef="evt_wlp_start"           targetRef="tsk_wlp_check_conditions" />
+    <sequenceFlow id="sf_wlp_decide"          sourceRef="tsk_wlp_check_conditions" targetRef="gw_wlp_action"           />
+    <sequenceFlow id="sf_wlp_promote"         sourceRef="gw_wlp_action"            targetRef="tsk_wlp_promote">
+      <conditionExpression>promote</conditionExpression>
+    </sequenceFlow>
+    <sequenceFlow id="sf_wlp_auto_demote"     sourceRef="gw_wlp_action"            targetRef="tsk_wlp_auto_demote">
+      <conditionExpression>auto-demote</conditionExpression>
+    </sequenceFlow>
+    <sequenceFlow id="sf_wlp_force_exit"      sourceRef="gw_wlp_action"            targetRef="tsk_wlp_force_exit">
+      <conditionExpression>force exit</conditionExpression>
+    </sequenceFlow>
+    <sequenceFlow id="sf_wlp_no_change"       sourceRef="gw_wlp_action"            targetRef="evt_wlp_no_change">
+      <conditionExpression>no change</conditionExpression>
+    </sequenceFlow>
+    <sequenceFlow id="sf_wlp_promo_route"     sourceRef="tsk_wlp_promote"          targetRef="gw_wlp_promo_target"    />
+    <sequenceFlow id="sf_wlp_promo_research"  sourceRef="gw_wlp_promo_target"      targetRef="evt_wlp_throw_research">
+      <conditionExpression>target state = Research</conditionExpression>
+    </sequenceFlow>
+    <sequenceFlow id="sf_wlp_promo_building"  sourceRef="gw_wlp_promo_target"      targetRef="evt_wlp_throw_building">
+      <conditionExpression>target state = Building Conviction</conditionExpression>
+    </sequenceFlow>
+    <sequenceFlow id="sf_wlp_promo_high"      sourceRef="gw_wlp_promo_target"      targetRef="evt_wlp_throw_high">
+      <conditionExpression>target state = High Conviction</conditionExpression>
+    </sequenceFlow>
+    <sequenceFlow id="sf_wlp_research_notify" sourceRef="evt_wlp_throw_research"   targetRef="tsk_wlp_notify_user"    />
+    <sequenceFlow id="sf_wlp_building_notify" sourceRef="evt_wlp_throw_building"   targetRef="tsk_wlp_notify_user"    />
+    <sequenceFlow id="sf_wlp_high_notify"     sourceRef="evt_wlp_throw_high"       targetRef="tsk_wlp_notify_user"    />
+    <sequenceFlow id="sf_wlp_notify_demote"   sourceRef="tsk_wlp_auto_demote"      targetRef="tsk_wlp_notify_user"    />
+    <sequenceFlow id="sf_wlp_exit_throw"      sourceRef="tsk_wlp_force_exit"       targetRef="evt_wlp_throw_exit"     />
+    <sequenceFlow id="sf_wlp_exit_notify"     sourceRef="evt_wlp_throw_exit"       targetRef="tsk_wlp_notify_user"    />
+    <sequenceFlow id="sf_wlp_end"             sourceRef="tsk_wlp_notify_user"      targetRef="evt_wlp_end"            />
+
+  </process>
+
+  <!-- BPMN DI -->
+  <bpmndi:BPMNDiagram id="di_watchlist">
+    <bpmndi:BPMNPlane id="plane_watchlist" bpmnElement="collab_watchlist">
+
+      <bpmndi:BPMNShape id="shape_pool_wl_user"     bpmnElement="pool_wl_user"     isHorizontal="true">
+        <omgdc:Bounds x="30" y="30"  width="1900" height="400" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_pool_wl_platform" bpmnElement="pool_wl_platform" isHorizontal="true">
+        <omgdc:Bounds x="30" y="450" width="1900" height="340" />
+      </bpmndi:BPMNShape>
+
+      <!-- User pool: state pipeline left-to-right -->
+      <bpmndi:BPMNShape id="shape_evt_wl_start" bpmnElement="evt_wl_start">
+        <omgdc:Bounds x="80"  y="192" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_tsk_wl_discovery" bpmnElement="tsk_wl_discovery">
+        <omgdc:Bounds x="160" y="140" width="160" height="120" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_bnd_wl_promote_research" bpmnElement="bnd_wl_promote_research">
+        <omgdc:Bounds x="222" y="242" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_gw_wl_from_discovery" bpmnElement="gw_wl_from_discovery" isMarkerVisible="true">
+        <omgdc:Bounds x="360" y="178" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_tsk_wl_research" bpmnElement="tsk_wl_research">
+        <omgdc:Bounds x="460" y="140" width="160" height="120" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_bnd_wl_promote_building" bpmnElement="bnd_wl_promote_building">
+        <omgdc:Bounds x="522" y="242" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_gw_wl_from_research" bpmnElement="gw_wl_from_research" isMarkerVisible="true">
+        <omgdc:Bounds x="660" y="178" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_tsk_wl_building" bpmnElement="tsk_wl_building">
+        <omgdc:Bounds x="760" y="140" width="160" height="120" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_bnd_wl_promote_high" bpmnElement="bnd_wl_promote_high">
+        <omgdc:Bounds x="822" y="242" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_gw_wl_from_building" bpmnElement="gw_wl_from_building" isMarkerVisible="true">
+        <omgdc:Bounds x="960" y="178" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_tsk_wl_high_conviction" bpmnElement="tsk_wl_high_conviction">
+        <omgdc:Bounds x="1060" y="140" width="160" height="120" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_gw_wl_from_high" bpmnElement="gw_wl_from_high" isMarkerVisible="true">
+        <omgdc:Bounds x="1260" y="178" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_tsk_wl_position" bpmnElement="tsk_wl_position">
+        <omgdc:Bounds x="1360" y="140" width="160" height="120" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_tsk_wl_monitoring" bpmnElement="tsk_wl_monitoring">
+        <omgdc:Bounds x="1560" y="140" width="160" height="120" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_bnd_wl_force_exit" bpmnElement="bnd_wl_force_exit">
+        <omgdc:Bounds x="1622" y="242" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_gw_wl_from_monitoring" bpmnElement="gw_wl_from_monitoring" isMarkerVisible="true">
+        <omgdc:Bounds x="1760" y="178" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_tsk_wl_exited" bpmnElement="tsk_wl_exited">
+        <omgdc:Bounds x="1840" y="140" width="60" height="120" />
+      </bpmndi:BPMNShape>
+
+      <!-- Platform pool: state evaluation + message dispatch -->
+      <bpmndi:BPMNShape id="shape_evt_wlp_start" bpmnElement="evt_wlp_start">
+        <omgdc:Bounds x="80"  y="612" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_tsk_wlp_check_conditions" bpmnElement="tsk_wlp_check_conditions">
+        <omgdc:Bounds x="160" y="590" width="160" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_gw_wlp_action" bpmnElement="gw_wlp_action" isMarkerVisible="true">
+        <omgdc:Bounds x="370" y="608" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_tsk_wlp_promote" bpmnElement="tsk_wlp_promote">
+        <omgdc:Bounds x="460" y="480" width="160" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_gw_wlp_promo_target" bpmnElement="gw_wlp_promo_target" isMarkerVisible="true">
+        <omgdc:Bounds x="670" y="495" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_evt_wlp_throw_research" bpmnElement="evt_wlp_throw_research">
+        <omgdc:Bounds x="770" y="462" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_evt_wlp_throw_building" bpmnElement="evt_wlp_throw_building">
+        <omgdc:Bounds x="770" y="512" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_evt_wlp_throw_high" bpmnElement="evt_wlp_throw_high">
+        <omgdc:Bounds x="770" y="562" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_tsk_wlp_auto_demote" bpmnElement="tsk_wlp_auto_demote">
+        <omgdc:Bounds x="460" y="590" width="160" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_tsk_wlp_force_exit" bpmnElement="tsk_wlp_force_exit">
+        <omgdc:Bounds x="460" y="690" width="160" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_evt_wlp_throw_exit" bpmnElement="evt_wlp_throw_exit">
+        <omgdc:Bounds x="670" y="712" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_tsk_wlp_notify_user" bpmnElement="tsk_wlp_notify_user">
+        <omgdc:Bounds x="860" y="590" width="160" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_evt_wlp_no_change" bpmnElement="evt_wlp_no_change">
+        <omgdc:Bounds x="460" y="772" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_evt_wlp_end" bpmnElement="evt_wlp_end">
+        <omgdc:Bounds x="1070" y="612" width="36" height="36" />
+      </bpmndi:BPMNShape>
+
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+
+</definitions>

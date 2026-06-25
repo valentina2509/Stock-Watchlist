@@ -1,0 +1,515 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<definitions xmlns="http://www.omg.org/spec/BPMN/20100524/MODEL"
+             xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+             xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI"
+             xmlns:omgdc="http://www.omg.org/spec/DD/20100524/DC"
+             xmlns:omgdi="http://www.omg.org/spec/DD/20100524/DI"
+             targetNamespace="http://stock-conviction-app/ai-research-copilot"
+             id="ai_research_copilot">
+
+  <!-- ═══════════════════════════════════════════════════════════════
+       PROCESS: AI Research Copilot (Claude)
+       Maps to PRD: §7.8 — AI-01 through AI-10
+       Research Modes:
+         1. Filing Summary     5. Risk Analysis
+         2. Score Explanation  6. Entry Timing
+         3. Thesis Review      7. Valuation Critique
+         4. Company Comparison 8. Thesis Drafting
+                               9. Missing Evidence (proactive)
+       ═══════════════════════════════════════════════════════════════ -->
+
+  <collaboration id="collab_ai_copilot">
+    <participant id="pool_ai_investor"  name="Investor"               processRef="proc_ai_investor"  />
+    <participant id="pool_ai_router"    name="AI Query Router"        processRef="proc_ai_router"    />
+    <participant id="pool_claude"       name="Claude API"             processRef="proc_claude"       />
+    <participant id="pool_research_store" name="Research Store"       processRef="proc_research_store" />
+
+    <messageFlow id="mf_ai_query"      name="Research Query"         sourceRef="tsk_ai_submit_query"      targetRef="tsk_air_receive_query"  />
+    <messageFlow id="mf_ai_response"   name="AI Response"            sourceRef="tsk_air_deliver_response" targetRef="tsk_ai_receive_response" />
+    <messageFlow id="mf_air_claude"    name="Enriched Prompt"        sourceRef="tsk_air_build_prompt"     targetRef="tsk_claude_generate"    />
+    <messageFlow id="mf_claude_result" name="Raw Generation"         sourceRef="tsk_claude_generate"      targetRef="tsk_air_post_process"   />
+    <messageFlow id="mf_air_store"     name="Store Research Note"    sourceRef="tsk_air_store_response"   targetRef="tsk_rs_write"           />
+    <messageFlow id="mf_proactive"     name="Proactive Insight"      sourceRef="tsk_air_proactive_flag"   targetRef="tsk_ai_receive_response" />
+  </collaboration>
+
+  <!-- ══════════════════════════
+       POOL: INVESTOR
+       ══════════════════════════ -->
+  <process id="proc_ai_investor" name="Investor — AI Copilot Interaction" isExecutable="false">
+
+    <startEvent id="evt_ai_open_copilot" name="Investor Opens&#10;AI Copilot Panel">
+      <outgoing>sf_ai_open_choice</outgoing>
+    </startEvent>
+
+    <exclusiveGateway id="gw_ai_interaction_type" name="Interaction Type?">
+      <incoming>sf_ai_open_choice</incoming>
+      <outgoing>sf_ai_type_query</outgoing>
+      <outgoing>sf_ai_type_proactive</outgoing>
+    </exclusiveGateway>
+
+    <!-- Investor-initiated query -->
+    <userTask id="tsk_ai_formulate_query" name="Formulate Research Question&#10;(e.g., 'Summarize latest 10-Q',&#10;'Why did conviction drop?',&#10;'Compare vs. peer')">
+      <incoming>sf_ai_type_query</incoming>
+      <outgoing>sf_ai_select_mode</outgoing>
+    </userTask>
+
+    <exclusiveGateway id="gw_ai_mode_select" name="Research Mode?">
+      <incoming>sf_ai_select_mode</incoming>
+      <outgoing>sf_ai_mode_filing</outgoing>
+      <outgoing>sf_ai_mode_score</outgoing>
+      <outgoing>sf_ai_mode_thesis</outgoing>
+      <outgoing>sf_ai_mode_compare</outgoing>
+      <outgoing>sf_ai_mode_risk</outgoing>
+      <outgoing>sf_ai_mode_timing</outgoing>
+      <outgoing>sf_ai_mode_valuation</outgoing>
+      <outgoing>sf_ai_mode_draft</outgoing>
+    </exclusiveGateway>
+
+    <!-- All modes converge to submit -->
+    <userTask id="tsk_ai_submit_query" name="Submit Query to Copilot&#10;(with stock context attached)">
+      <incoming>sf_ai_mode_filing</incoming>
+      <incoming>sf_ai_mode_score</incoming>
+      <incoming>sf_ai_mode_thesis</incoming>
+      <incoming>sf_ai_mode_compare</incoming>
+      <incoming>sf_ai_mode_risk</incoming>
+      <incoming>sf_ai_mode_timing</incoming>
+      <incoming>sf_ai_mode_valuation</incoming>
+      <incoming>sf_ai_mode_draft</incoming>
+      <outgoing>sf_ai_await_response</outgoing>
+    </userTask>
+
+    <intermediateCatchEvent id="evt_ai_response_ready" name="Response Ready">
+      <incoming>sf_ai_await_response</incoming>
+      <outgoing>sf_ai_query_review</outgoing>
+      <messageEventDefinition />
+    </intermediateCatchEvent>
+
+    <!-- Proactive insight surfaced by platform -->
+    <intermediateCatchEvent id="evt_ai_proactive_insight" name="Proactive Insight&#10;from Copilot">
+      <incoming>sf_ai_type_proactive</incoming>
+      <outgoing>sf_ai_proactive_review</outgoing>
+      <messageEventDefinition />
+    </intermediateCatchEvent>
+
+    <userTask id="tsk_ai_receive_response" name="Review AI Research Response&#10;(with citations, confidence level,&#10;and follow-up suggestions)">
+      <incoming>sf_ai_query_review</incoming>
+      <incoming>sf_ai_proactive_review</incoming>
+      <outgoing>sf_ai_post_response</outgoing>
+    </userTask>
+
+    <exclusiveGateway id="gw_ai_post_action" name="Post-Response Action?">
+      <incoming>sf_ai_post_response</incoming>
+      <outgoing>sf_ai_save_note</outgoing>
+      <outgoing>sf_ai_followup</outgoing>
+      <outgoing>sf_ai_devil_advocate</outgoing>
+      <outgoing>sf_ai_compare_history</outgoing>
+      <outgoing>sf_ai_done</outgoing>
+    </exclusiveGateway>
+
+    <userTask id="tsk_ai_save_note" name="Save as Research Note&#10;(persisted to stock history)">
+      <incoming>sf_ai_save_note</incoming>
+      <outgoing>sf_ai_saved_done</outgoing>
+    </userTask>
+
+    <userTask id="tsk_ai_followup_query" name="Ask Follow-Up Question&#10;(context maintained in session)">
+      <incoming>sf_ai_followup</incoming>
+      <outgoing>sf_ai_followup_submit</outgoing>
+    </userTask>
+    <sequenceFlow id="sf_ai_followup_submit" sourceRef="tsk_ai_followup_query" targetRef="tsk_ai_submit_query" />
+
+    <userTask id="tsk_ai_devil_advocate" name="Request Devil's Advocate&#10;(challenge thesis assumptions)">
+      <incoming>sf_ai_devil_advocate</incoming>
+      <outgoing>sf_ai_da_submit</outgoing>
+    </userTask>
+    <sequenceFlow id="sf_ai_da_submit" sourceRef="tsk_ai_devil_advocate" targetRef="tsk_ai_submit_query" />
+
+    <userTask id="tsk_ai_compare_history" name="Compare to Prior Response&#10;(30/60/90 days ago)">
+      <incoming>sf_ai_compare_history</incoming>
+      <outgoing>sf_ai_ch_submit</outgoing>
+    </userTask>
+    <sequenceFlow id="sf_ai_ch_submit" sourceRef="tsk_ai_compare_history" targetRef="tsk_ai_submit_query" />
+
+    <endEvent id="evt_ai_saved_end" name="Note Saved">
+      <incoming>sf_ai_saved_done</incoming>
+    </endEvent>
+
+    <endEvent id="evt_ai_session_end" name="Copilot Session Complete">
+      <incoming>sf_ai_done</incoming>
+    </endEvent>
+
+    <sequenceFlow id="sf_ai_open_choice"      sourceRef="evt_ai_open_copilot"       targetRef="gw_ai_interaction_type"  />
+    <sequenceFlow id="sf_ai_type_query"        sourceRef="gw_ai_interaction_type"    targetRef="tsk_ai_formulate_query">
+      <conditionExpression>investor-initiated</conditionExpression>
+    </sequenceFlow>
+    <sequenceFlow id="sf_ai_type_proactive"    sourceRef="gw_ai_interaction_type"    targetRef="evt_ai_proactive_insight">
+      <conditionExpression>proactive insight surfaced</conditionExpression>
+    </sequenceFlow>
+    <sequenceFlow id="sf_ai_select_mode"       sourceRef="tsk_ai_formulate_query"    targetRef="gw_ai_mode_select"       />
+    <sequenceFlow id="sf_ai_mode_filing"        sourceRef="gw_ai_mode_select"         targetRef="tsk_ai_submit_query">
+      <conditionExpression>filing summary</conditionExpression>
+    </sequenceFlow>
+    <sequenceFlow id="sf_ai_mode_score"         sourceRef="gw_ai_mode_select"         targetRef="tsk_ai_submit_query">
+      <conditionExpression>score explanation</conditionExpression>
+    </sequenceFlow>
+    <sequenceFlow id="sf_ai_mode_thesis"        sourceRef="gw_ai_mode_select"         targetRef="tsk_ai_submit_query">
+      <conditionExpression>thesis review</conditionExpression>
+    </sequenceFlow>
+    <sequenceFlow id="sf_ai_mode_compare"       sourceRef="gw_ai_mode_select"         targetRef="tsk_ai_submit_query">
+      <conditionExpression>company comparison</conditionExpression>
+    </sequenceFlow>
+    <sequenceFlow id="sf_ai_mode_risk"          sourceRef="gw_ai_mode_select"         targetRef="tsk_ai_submit_query">
+      <conditionExpression>risk analysis</conditionExpression>
+    </sequenceFlow>
+    <sequenceFlow id="sf_ai_mode_timing"        sourceRef="gw_ai_mode_select"         targetRef="tsk_ai_submit_query">
+      <conditionExpression>entry timing</conditionExpression>
+    </sequenceFlow>
+    <sequenceFlow id="sf_ai_mode_valuation"     sourceRef="gw_ai_mode_select"         targetRef="tsk_ai_submit_query">
+      <conditionExpression>valuation critique</conditionExpression>
+    </sequenceFlow>
+    <sequenceFlow id="sf_ai_mode_draft"         sourceRef="gw_ai_mode_select"         targetRef="tsk_ai_submit_query">
+      <conditionExpression>thesis drafting</conditionExpression>
+    </sequenceFlow>
+    <sequenceFlow id="sf_ai_await_response"     sourceRef="tsk_ai_submit_query"       targetRef="evt_ai_response_ready"  />
+    <sequenceFlow id="sf_ai_query_review"        sourceRef="evt_ai_response_ready"     targetRef="tsk_ai_receive_response" />
+    <sequenceFlow id="sf_ai_proactive_review"   sourceRef="evt_ai_proactive_insight"  targetRef="tsk_ai_receive_response" />
+    <sequenceFlow id="sf_ai_post_response"      sourceRef="tsk_ai_receive_response"   targetRef="gw_ai_post_action"       />
+    <sequenceFlow id="sf_ai_save_note"          sourceRef="gw_ai_post_action"         targetRef="tsk_ai_save_note">
+      <conditionExpression>save as note</conditionExpression>
+    </sequenceFlow>
+    <sequenceFlow id="sf_ai_followup"           sourceRef="gw_ai_post_action"         targetRef="tsk_ai_followup_query">
+      <conditionExpression>follow-up question</conditionExpression>
+    </sequenceFlow>
+    <sequenceFlow id="sf_ai_devil_advocate"     sourceRef="gw_ai_post_action"         targetRef="tsk_ai_devil_advocate">
+      <conditionExpression>devil's advocate</conditionExpression>
+    </sequenceFlow>
+    <sequenceFlow id="sf_ai_compare_history"    sourceRef="gw_ai_post_action"         targetRef="tsk_ai_compare_history">
+      <conditionExpression>compare to historical response</conditionExpression>
+    </sequenceFlow>
+    <sequenceFlow id="sf_ai_done"               sourceRef="gw_ai_post_action"         targetRef="evt_ai_session_end">
+      <conditionExpression>done</conditionExpression>
+    </sequenceFlow>
+    <sequenceFlow id="sf_ai_saved_done"         sourceRef="tsk_ai_save_note"          targetRef="evt_ai_saved_end"        />
+
+  </process>
+
+  <!-- ══════════════════════════
+       POOL: AI QUERY ROUTER
+       ══════════════════════════ -->
+  <process id="proc_ai_router" name="AI Query Router" isExecutable="false">
+
+    <startEvent id="evt_air_start" name="Query Received">
+      <outgoing>sf_air_parse</outgoing>
+    </startEvent>
+
+    <serviceTask id="tsk_air_receive_query" name="Receive &amp; Parse Query&#10;(intent classification, mode detection)">
+      <incoming>sf_air_parse</incoming>
+      <outgoing>sf_air_to_sanitize</outgoing>
+    </serviceTask>
+
+    <!-- SEC-005 fix: sanitise user-controlled content before it enters Claude prompts -->
+    <serviceTask id="tsk_air_sanitize_input" name="Sanitise User-Controlled Input&#10;(strip prompt injection patterns,&#10;delimit untrusted content sections)">
+      <incoming>sf_air_to_sanitize</incoming>
+      <outgoing>sf_air_sanitized</outgoing>
+    </serviceTask>
+
+    <serviceTask id="tsk_air_load_context" name="Load Full Stock Context&#10;(watchlist state, thesis, scores,&#10;valuation model, prior conversations)">
+      <incoming>sf_air_sanitized</incoming>
+      <outgoing>sf_air_route_mode</outgoing>
+    </serviceTask>
+
+    <exclusiveGateway id="gw_air_mode_route" name="Route by Mode">
+      <incoming>sf_air_route_mode</incoming>
+      <outgoing>sf_air_route_filing</outgoing>
+      <outgoing>sf_air_route_score</outgoing>
+      <outgoing>sf_air_route_thesis</outgoing>
+      <outgoing>sf_air_route_compare</outgoing>
+      <outgoing>sf_air_route_risk</outgoing>
+      <outgoing>sf_air_route_timing</outgoing>
+      <outgoing>sf_air_route_valuation</outgoing>
+      <outgoing>sf_air_route_draft</outgoing>
+    </exclusiveGateway>
+
+    <!-- Mode-specific data fetchers — each has a unique outgoing sequenceFlow ID -->
+    <serviceTask id="tsk_air_fetch_filing"    name="Fetch &amp; Parse SEC Filing&#10;(10-K / 10-Q / 8-K)">
+      <incoming>sf_air_route_filing</incoming>
+      <outgoing>sf_air_filing_to_prompt</outgoing>
+    </serviceTask>
+    <serviceTask id="tsk_air_fetch_score"     name="Fetch Score Component&#10;History &amp; Delta Log">
+      <incoming>sf_air_route_score</incoming>
+      <outgoing>sf_air_score_to_prompt</outgoing>
+    </serviceTask>
+    <serviceTask id="tsk_air_fetch_thesis"    name="Fetch Thesis + Drift History&#10;&amp; Confirming/Diverging Data">
+      <incoming>sf_air_route_thesis</incoming>
+      <outgoing>sf_air_thesis_to_prompt</outgoing>
+    </serviceTask>
+    <serviceTask id="tsk_air_fetch_peers"     name="Fetch Peer Company Data&#10;(financials, scores, multiples)">
+      <incoming>sf_air_route_compare</incoming>
+      <outgoing>sf_air_peers_to_prompt</outgoing>
+    </serviceTask>
+    <serviceTask id="tsk_air_fetch_risk"      name="Fetch Risk Factors&#10;(10-K §1A, news risks, thesis risks)">
+      <incoming>sf_air_route_risk</incoming>
+      <outgoing>sf_air_risk_to_prompt</outgoing>
+    </serviceTask>
+    <serviceTask id="tsk_air_fetch_timing"    name="Fetch Why Now Signals +&#10;Technical Conditions +&#10;Catalyst Calendar">
+      <incoming>sf_air_route_timing</incoming>
+      <outgoing>sf_air_timing_to_prompt</outgoing>
+    </serviceTask>
+    <serviceTask id="tsk_air_fetch_valuation" name="Fetch Valuation Model&#10;Assumptions + Peer Benchmarks">
+      <incoming>sf_air_route_valuation</incoming>
+      <outgoing>sf_air_valuation_to_prompt</outgoing>
+    </serviceTask>
+    <serviceTask id="tsk_air_fetch_all_data"  name="Fetch All Available Data&#10;(for thesis drafting)">
+      <incoming>sf_air_route_draft</incoming>
+      <outgoing>sf_air_all_to_prompt</outgoing>
+    </serviceTask>
+
+    <serviceTask id="tsk_air_build_prompt" name="Build Enriched Prompt&#10;(mode + context + data + constraints)">
+      <incoming>sf_air_filing_to_prompt</incoming>
+      <incoming>sf_air_score_to_prompt</incoming>
+      <incoming>sf_air_thesis_to_prompt</incoming>
+      <incoming>sf_air_peers_to_prompt</incoming>
+      <incoming>sf_air_risk_to_prompt</incoming>
+      <incoming>sf_air_timing_to_prompt</incoming>
+      <incoming>sf_air_valuation_to_prompt</incoming>
+      <incoming>sf_air_all_to_prompt</incoming>
+      <outgoing>sf_air_send_to_claude</outgoing>
+    </serviceTask>
+
+    <intermediateCatchEvent id="evt_air_claude_response" name="Claude Response&#10;Received">
+      <incoming>sf_air_send_to_claude</incoming>
+      <outgoing>sf_air_post_process</outgoing>
+      <messageEventDefinition />
+    </intermediateCatchEvent>
+
+    <serviceTask id="tsk_air_post_process" name="Post-Process Response&#10;(add citations, confidence tag,&#10;flag missing evidence)">
+      <incoming>sf_air_post_process</incoming>
+      <outgoing>sf_air_check_missing</outgoing>
+    </serviceTask>
+
+    <exclusiveGateway id="gw_air_missing_evidence" name="Missing Evidence&#10;Detected?">
+      <incoming>sf_air_check_missing</incoming>
+      <outgoing>sf_air_flag_missing</outgoing>
+      <outgoing>sf_air_no_missing</outgoing>
+    </exclusiveGateway>
+
+    <serviceTask id="tsk_air_append_missing" name="Append Missing Evidence&#10;Warning to Response&#10;(e.g., 'No bear case defined')">
+      <incoming>sf_air_flag_missing</incoming>
+      <outgoing>sf_air_store_response</outgoing>
+    </serviceTask>
+
+    <serviceTask id="tsk_air_store_response" name="Store Response in&#10;Research History (per stock)">
+      <incoming>sf_air_store_response</incoming>
+      <incoming>sf_air_no_missing</incoming>
+      <outgoing>sf_air_deliver</outgoing>
+    </serviceTask>
+
+    <serviceTask id="tsk_air_deliver_response" name="Deliver Formatted Response&#10;to Investor UI">
+      <incoming>sf_air_deliver</incoming>
+      <outgoing>sf_air_deliver_to_end</outgoing>
+    </serviceTask>
+
+    <!-- Proactive insight monitor (parallel path) -->
+    <serviceTask id="tsk_air_proactive_monitor" name="Continuously Monitor for&#10;Proactive Insight Opportunities&#10;(score shift, news event, drift)">
+      <outgoing>sf_air_proactive_check</outgoing>
+    </serviceTask>
+
+    <exclusiveGateway id="gw_air_proactive" name="Insight Worth&#10;Surfacing?">
+      <incoming>sf_air_proactive_check</incoming>
+      <outgoing>sf_air_proactive_yes</outgoing>
+      <outgoing>sf_air_proactive_no</outgoing>
+    </exclusiveGateway>
+
+    <serviceTask id="tsk_air_proactive_flag" name="Generate Proactive Insight&#10;and Push to Investor">
+      <incoming>sf_air_proactive_yes</incoming>
+      <outgoing>sf_air_proactive_to_end</outgoing>
+    </serviceTask>
+
+    <endEvent id="evt_air_end" name="Router Cycle Complete">
+      <incoming>sf_air_deliver_to_end</incoming>
+      <incoming>sf_air_proactive_to_end</incoming>
+      <incoming>sf_air_proactive_no</incoming>
+    </endEvent>
+
+    <sequenceFlow id="sf_air_parse"           sourceRef="evt_air_start"                targetRef="tsk_air_receive_query"    />
+    <sequenceFlow id="sf_air_to_sanitize"     sourceRef="tsk_air_receive_query"         targetRef="tsk_air_sanitize_input"   />
+    <sequenceFlow id="sf_air_sanitized"       sourceRef="tsk_air_sanitize_input"        targetRef="tsk_air_load_context"     />
+    <sequenceFlow id="sf_air_route_mode"      sourceRef="tsk_air_load_context"          targetRef="gw_air_mode_route"        />
+    <sequenceFlow id="sf_air_route_filing"    sourceRef="gw_air_mode_route"             targetRef="tsk_air_fetch_filing">
+      <conditionExpression>filing summary mode</conditionExpression>
+    </sequenceFlow>
+    <sequenceFlow id="sf_air_route_score"     sourceRef="gw_air_mode_route"             targetRef="tsk_air_fetch_score">
+      <conditionExpression>score explanation mode</conditionExpression>
+    </sequenceFlow>
+    <sequenceFlow id="sf_air_route_thesis"    sourceRef="gw_air_mode_route"             targetRef="tsk_air_fetch_thesis">
+      <conditionExpression>thesis review mode</conditionExpression>
+    </sequenceFlow>
+    <sequenceFlow id="sf_air_route_compare"   sourceRef="gw_air_mode_route"             targetRef="tsk_air_fetch_peers">
+      <conditionExpression>comparison mode</conditionExpression>
+    </sequenceFlow>
+    <sequenceFlow id="sf_air_route_risk"      sourceRef="gw_air_mode_route"             targetRef="tsk_air_fetch_risk">
+      <conditionExpression>risk analysis mode</conditionExpression>
+    </sequenceFlow>
+    <sequenceFlow id="sf_air_route_timing"    sourceRef="gw_air_mode_route"             targetRef="tsk_air_fetch_timing">
+      <conditionExpression>timing mode</conditionExpression>
+    </sequenceFlow>
+    <sequenceFlow id="sf_air_route_valuation" sourceRef="gw_air_mode_route"             targetRef="tsk_air_fetch_valuation">
+      <conditionExpression>valuation critique mode</conditionExpression>
+    </sequenceFlow>
+    <sequenceFlow id="sf_air_route_draft"     sourceRef="gw_air_mode_route"             targetRef="tsk_air_fetch_all_data">
+      <conditionExpression>thesis drafting mode</conditionExpression>
+    </sequenceFlow>
+    <sequenceFlow id="sf_air_filing_to_prompt"    sourceRef="tsk_air_fetch_filing"      targetRef="tsk_air_build_prompt"     />
+    <sequenceFlow id="sf_air_score_to_prompt"    sourceRef="tsk_air_fetch_score"       targetRef="tsk_air_build_prompt"     />
+    <sequenceFlow id="sf_air_thesis_to_prompt"   sourceRef="tsk_air_fetch_thesis"      targetRef="tsk_air_build_prompt"     />
+    <sequenceFlow id="sf_air_peers_to_prompt"    sourceRef="tsk_air_fetch_peers"       targetRef="tsk_air_build_prompt"     />
+    <sequenceFlow id="sf_air_risk_to_prompt"     sourceRef="tsk_air_fetch_risk"        targetRef="tsk_air_build_prompt"     />
+    <sequenceFlow id="sf_air_timing_to_prompt"   sourceRef="tsk_air_fetch_timing"      targetRef="tsk_air_build_prompt"     />
+    <sequenceFlow id="sf_air_valuation_to_prompt" sourceRef="tsk_air_fetch_valuation"  targetRef="tsk_air_build_prompt"     />
+    <sequenceFlow id="sf_air_all_to_prompt"      sourceRef="tsk_air_fetch_all_data"    targetRef="tsk_air_build_prompt"     />
+    <sequenceFlow id="sf_air_send_to_claude"  sourceRef="tsk_air_build_prompt"          targetRef="evt_air_claude_response"  />
+    <sequenceFlow id="sf_air_post_process"    sourceRef="evt_air_claude_response"       targetRef="tsk_air_post_process"     />
+    <sequenceFlow id="sf_air_check_missing"   sourceRef="tsk_air_post_process"          targetRef="gw_air_missing_evidence"  />
+    <sequenceFlow id="sf_air_flag_missing"    sourceRef="gw_air_missing_evidence"       targetRef="tsk_air_append_missing">
+      <conditionExpression>missing evidence detected</conditionExpression>
+    </sequenceFlow>
+    <sequenceFlow id="sf_air_no_missing"      sourceRef="gw_air_missing_evidence"       targetRef="tsk_air_store_response">
+      <conditionExpression>no missing evidence</conditionExpression>
+    </sequenceFlow>
+    <sequenceFlow id="sf_air_store_response"  sourceRef="tsk_air_append_missing"        targetRef="tsk_air_store_response"   />
+    <sequenceFlow id="sf_air_deliver"         sourceRef="tsk_air_store_response"        targetRef="tsk_air_deliver_response" />
+    <sequenceFlow id="sf_air_deliver_to_end"  sourceRef="tsk_air_deliver_response"      targetRef="evt_air_end"              />
+    <sequenceFlow id="sf_air_proactive_check" sourceRef="tsk_air_proactive_monitor"     targetRef="gw_air_proactive"         />
+    <sequenceFlow id="sf_air_proactive_yes"   sourceRef="gw_air_proactive"              targetRef="tsk_air_proactive_flag">
+      <conditionExpression>worth surfacing</conditionExpression>
+    </sequenceFlow>
+    <sequenceFlow id="sf_air_proactive_no"    sourceRef="gw_air_proactive"              targetRef="evt_air_end">
+      <conditionExpression>not worth surfacing</conditionExpression>
+    </sequenceFlow>
+    <sequenceFlow id="sf_air_proactive_to_end" sourceRef="tsk_air_proactive_flag"       targetRef="evt_air_end"              />
+
+  </process>
+
+  <!-- ══════════════════════════
+       POOL: CLAUDE API
+       ══════════════════════════ -->
+  <process id="proc_claude" name="Claude API" isExecutable="false">
+
+    <startEvent id="evt_claude_start" name="Enriched Prompt Received">
+      <outgoing>sf_claude_stream</outgoing>
+    </startEvent>
+
+    <serviceTask id="tsk_claude_generate" name="Generate Response&#10;(streaming, with tool use for&#10;data lookups as needed)">
+      <incoming>sf_claude_stream</incoming>
+      <outgoing>sf_claude_done</outgoing>
+    </serviceTask>
+
+    <endEvent id="evt_claude_end" name="Response Streamed">
+      <incoming>sf_claude_done</incoming>
+    </endEvent>
+
+    <sequenceFlow id="sf_claude_stream" sourceRef="evt_claude_start"     targetRef="tsk_claude_generate" />
+    <sequenceFlow id="sf_claude_done"   sourceRef="tsk_claude_generate"  targetRef="evt_claude_end"      />
+
+  </process>
+
+  <!-- ══════════════════════════
+       POOL: RESEARCH STORE
+       ══════════════════════════ -->
+  <process id="proc_research_store" name="Research Store" isExecutable="false">
+
+    <startEvent id="evt_rs_start" name="Store Request">
+      <outgoing>sf_rs_write</outgoing>
+    </startEvent>
+
+    <serviceTask id="tsk_rs_write" name="Write Response to&#10;Stock Research History&#10;(timestamped, mode-tagged)">
+      <incoming>sf_rs_write</incoming>
+      <outgoing>sf_rs_index</outgoing>
+    </serviceTask>
+
+    <serviceTask id="tsk_rs_index" name="Index for Historical&#10;Comparison Queries">
+      <incoming>sf_rs_index</incoming>
+      <outgoing>sf_rs_end</outgoing>
+    </serviceTask>
+
+    <endEvent id="evt_rs_end" name="Stored">
+      <incoming>sf_rs_end</incoming>
+    </endEvent>
+
+    <sequenceFlow id="sf_rs_write" sourceRef="evt_rs_start"  targetRef="tsk_rs_write"  />
+    <sequenceFlow id="sf_rs_index" sourceRef="tsk_rs_write"  targetRef="tsk_rs_index"  />
+    <sequenceFlow id="sf_rs_end"   sourceRef="tsk_rs_index"  targetRef="evt_rs_end"    />
+
+  </process>
+
+  <!-- BPMN DI -->
+  <bpmndi:BPMNDiagram id="di_ai_copilot">
+    <bpmndi:BPMNPlane id="plane_ai_copilot" bpmnElement="collab_ai_copilot">
+
+      <bpmndi:BPMNShape id="shape_pool_ai_investor"    bpmnElement="pool_ai_investor"    isHorizontal="true">
+        <omgdc:Bounds x="30" y="30"  width="1700" height="280" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_pool_ai_router"      bpmnElement="pool_ai_router"      isHorizontal="true">
+        <omgdc:Bounds x="30" y="330" width="1700" height="360" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_pool_claude"         bpmnElement="pool_claude"         isHorizontal="true">
+        <omgdc:Bounds x="30" y="710" width="1700" height="120" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_pool_research_store" bpmnElement="pool_research_store" isHorizontal="true">
+        <omgdc:Bounds x="30" y="850" width="1700" height="120" />
+      </bpmndi:BPMNShape>
+
+      <!-- Investor lane -->
+      <bpmndi:BPMNShape id="shape_evt_ai_open_copilot"    bpmnElement="evt_ai_open_copilot">
+        <omgdc:Bounds x="80"  y="148" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_gw_ai_interaction_type" bpmnElement="gw_ai_interaction_type" isMarkerVisible="true">
+        <omgdc:Bounds x="156" y="144" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_tsk_ai_formulate_query" bpmnElement="tsk_ai_formulate_query">
+        <omgdc:Bounds x="250" y="120" width="150" height="100" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_gw_ai_mode_select"      bpmnElement="gw_ai_mode_select" isMarkerVisible="true">
+        <omgdc:Bounds x="450" y="144" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_tsk_ai_submit_query"    bpmnElement="tsk_ai_submit_query">
+        <omgdc:Bounds x="560" y="125" width="140" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_tsk_ai_receive_response" bpmnElement="tsk_ai_receive_response">
+        <omgdc:Bounds x="920" y="125" width="150" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_gw_ai_post_action"      bpmnElement="gw_ai_post_action" isMarkerVisible="true">
+        <omgdc:Bounds x="1120" y="144" width="50" height="50" />
+      </bpmndi:BPMNShape>
+
+      <!-- Router lane -->
+      <bpmndi:BPMNShape id="shape_tsk_air_receive_query"  bpmnElement="tsk_air_receive_query">
+        <omgdc:Bounds x="80"  y="420" width="150" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_tsk_air_sanitize_input" bpmnElement="tsk_air_sanitize_input">
+        <omgdc:Bounds x="260" y="420" width="150" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_tsk_air_load_context"   bpmnElement="tsk_air_load_context">
+        <omgdc:Bounds x="440" y="420" width="150" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_gw_air_mode_route"      bpmnElement="gw_air_mode_route" isMarkerVisible="true">
+        <omgdc:Bounds x="460" y="435" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_tsk_air_build_prompt"   bpmnElement="tsk_air_build_prompt">
+        <omgdc:Bounds x="820" y="420" width="150" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_tsk_air_post_process"   bpmnElement="tsk_air_post_process">
+        <omgdc:Bounds x="1050" y="420" width="150" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="shape_tsk_air_deliver_response" bpmnElement="tsk_air_deliver_response">
+        <omgdc:Bounds x="1400" y="420" width="150" height="80" />
+      </bpmndi:BPMNShape>
+
+      <!-- Claude lane -->
+      <bpmndi:BPMNShape id="shape_tsk_claude_generate"    bpmnElement="tsk_claude_generate">
+        <omgdc:Bounds x="800" y="740" width="180" height="70" />
+      </bpmndi:BPMNShape>
+
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+
+</definitions>
