@@ -9,6 +9,8 @@ import WhyNowPanel from "@/components/WhyNowPanel";
 import ThesisEditor from "@/components/ThesisEditor";
 import ValuationPanel from "@/components/ValuationPanel";
 import AlertsPanel from "@/components/AlertsPanel";
+import PriceChart from "@/components/PriceChart";
+import PeerComparison from "@/components/PeerComparison";
 import type { ConvictionBreakdown } from "@/lib/conviction-scorer";
 import type { WhyNowBreakdown, SignalResult } from "@/lib/why-now-engine";
 
@@ -148,8 +150,14 @@ export default async function StockDetailPage({ params }: Props) {
           </section>
         )}
 
+        {/* Price chart */}
+        <PriceChart ticker={stock.ticker} />
+
         {/* Valuation scenarios */}
         <ValuationPanel watchlistItemId={itemId} />
+
+        {/* Peer comparison */}
+        <PeerComparison baseTicker={stock.ticker} />
 
         {/* Thesis */}
         <ThesisEditor
