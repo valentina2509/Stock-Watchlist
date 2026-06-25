@@ -1,6 +1,7 @@
 import { db } from "@/db";
 import { convictionScores, theses, watchlistItems } from "@/db/schema";
 import { eq, desc } from "drizzle-orm";
+import { checkConvictionAlerts } from "./alert-engine";
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const YFClass = require("yahoo-finance2").default as new () => {
@@ -421,6 +422,9 @@ export async function calculateAndPersistScore(watchlistItemId: number): Promise
     scoreBand: band,
     calculatedAt: new Date(),
   });
+
+  // Fire alerts asynchronously — don't block the score response
+  checkConvictionAlerts(watchlistItemId).catch(() => {});
 
   return { fundamental, valuation, momentum, thesis: thesisComp, whyNow, total, band };
 }

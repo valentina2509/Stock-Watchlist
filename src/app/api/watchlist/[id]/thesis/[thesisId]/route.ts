@@ -3,6 +3,7 @@ import { db } from "@/db";
 import { theses } from "@/db/schema";
 import { eq, and } from "drizzle-orm";
 import { z } from "zod";
+import { checkThesisAlerts } from "@/lib/alert-engine";
 
 const PatchSchema = z.object({
   driftStatus: z.enum(["ON_TRACK", "CONFIRMING", "DIVERGING", "BROKEN"]),
@@ -26,5 +27,6 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
     .returning();
 
   if (!updated) return NextResponse.json({ error: "Not found" }, { status: 404 });
+  checkThesisAlerts(itemId, parsed.data.driftStatus).catch(() => {});
   return NextResponse.json({ data: updated });
 }

@@ -5,6 +5,16 @@ import StockSearch from "@/components/StockSearch";
 import WatchlistTable from "@/components/WatchlistTable";
 import type { WatchlistState } from "@/db/schema";
 
+interface ActiveAlert {
+  id: number;
+  watchlistItemId: number;
+  alertType: string;
+  message: string | null;
+  ticker: string;
+  stockName: string;
+  createdAt: string;
+}
+
 interface WatchlistEntry {
   id: number;
   state: WatchlistState;
@@ -27,6 +37,11 @@ export default function Home() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  const [activeAlerts, setActiveAlerts] = useState<ActiveAlert[]>([]);
+
+  useEffect(() => {
+    fetch("/api/alerts").then(r => r.json()).then(j => setActiveAlerts(j.data ?? [])).catch(() => {});
+  }, []);
 
   const fetchWatchlist = useCallback(async () => {
     setRefreshing(true);
@@ -96,6 +111,12 @@ export default function Home() {
             <p className="text-xs text-zinc-500">Stock Research Pipeline</p>
           </div>
           <div className="flex items-center gap-4 text-xs text-zinc-400">
+            {activeAlerts.length > 0 && (
+              <span className="flex items-center gap-1.5 text-amber-600 dark:text-amber-400 font-medium">
+                <span className="inline-flex items-center justify-center h-4 w-4 rounded-full bg-red-500 text-[10px] font-bold text-white">{activeAlerts.length}</span>
+                active alert{activeAlerts.length > 1 ? "s" : ""}
+              </span>
+            )}
             <span>{watchlist.length} stocks</span>
             {refreshing && <span>Refreshing…</span>}
           </div>

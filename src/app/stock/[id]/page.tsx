@@ -8,6 +8,7 @@ import ScorePanel from "@/components/ScorePanel";
 import WhyNowPanel from "@/components/WhyNowPanel";
 import ThesisEditor from "@/components/ThesisEditor";
 import ValuationPanel from "@/components/ValuationPanel";
+import AlertsPanel from "@/components/AlertsPanel";
 import type { ConvictionBreakdown } from "@/lib/conviction-scorer";
 import type { WhyNowBreakdown, SignalResult } from "@/lib/why-now-engine";
 
@@ -94,6 +95,9 @@ export default async function StockDetailPage({ params }: Props) {
           </div>
           <StateBadge state={item.state} />
         </div>
+
+        {/* Alerts */}
+        <AlertsPanel watchlistItemId={itemId} />
 
         {/* Conviction score */}
         <ScorePanel watchlistItemId={itemId} initialBreakdown={null} />

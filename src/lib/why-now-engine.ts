@@ -1,6 +1,7 @@
 import { db } from "@/db";
 import { whyNowScores, stocks, watchlistItems } from "@/db/schema";
 import { eq, desc } from "drizzle-orm";
+import { checkWhyNowAlerts } from "./alert-engine";
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const YFClass = require("yahoo-finance2").default as new () => {
@@ -482,6 +483,8 @@ export async function calculateWhyNow(watchlistItemId: number): Promise<WhyNowBr
     breakdown: JSON.stringify({ signals }),
     calculatedAt: now,
   });
+
+  checkWhyNowAlerts(watchlistItemId, stockId).catch(() => {});
 
   return { signals, totalScore, isHotWindow, calculatedAt: now.toISOString() };
 }
