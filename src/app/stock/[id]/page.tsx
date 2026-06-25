@@ -6,6 +6,7 @@ import { eq, desc } from "drizzle-orm";
 import { StateBadge } from "@/components/ConvictionBadge";
 import ScorePanel from "@/components/ScorePanel";
 import WhyNowPanel from "@/components/WhyNowPanel";
+import ThesisEditor from "@/components/ThesisEditor";
 import type { ConvictionBreakdown } from "@/lib/conviction-scorer";
 import type { WhyNowBreakdown, SignalResult } from "@/lib/why-now-engine";
 
@@ -142,55 +143,21 @@ export default async function StockDetailPage({ params }: Props) {
           </section>
         )}
 
-        {/* Thesis section */}
-        <section className="space-y-3">
-          <div className="flex items-center justify-between">
-            <h2 className="text-sm font-medium text-zinc-700 dark:text-zinc-300">Investment Thesis</h2>
-          </div>
-          {latestThesis ? (
-            <div className="space-y-4 rounded-xl border border-zinc-200 bg-white p-5 dark:border-zinc-800 dark:bg-zinc-900">
-              {latestThesis.bullCase && (
-                <div>
-                  <p className="text-xs font-medium text-green-600 dark:text-green-400 mb-1">Bull Case</p>
-                  <p className="text-sm text-zinc-700 dark:text-zinc-300 leading-relaxed">{latestThesis.bullCase}</p>
-                </div>
-              )}
-              {latestThesis.bearCase && (
-                <div>
-                  <p className="text-xs font-medium text-red-500 dark:text-red-400 mb-1">Bear Case</p>
-                  <p className="text-sm text-zinc-700 dark:text-zinc-300 leading-relaxed">{latestThesis.bearCase}</p>
-                </div>
-              )}
-              {latestThesis.targetPrice && (
-                <div className="flex items-center gap-4 text-sm">
-                  <div>
-                    <p className="text-xs text-zinc-500">Target Price</p>
-                    <p className="font-semibold text-zinc-800 dark:text-zinc-200">${latestThesis.targetPrice}</p>
-                  </div>
-                  {latestThesis.timeHorizon && (
-                    <div>
-                      <p className="text-xs text-zinc-500">Horizon</p>
-                      <p className="font-semibold text-zinc-800 dark:text-zinc-200">{latestThesis.timeHorizon}</p>
-                    </div>
-                  )}
-                  <div>
-                    <p className="text-xs text-zinc-500">Drift Status</p>
-                    <p className={`font-semibold text-sm ${
-                      latestThesis.driftStatus === "BROKEN" ? "text-red-600" :
-                      latestThesis.driftStatus === "DIVERGING" ? "text-orange-500" :
-                      latestThesis.driftStatus === "CONFIRMING" ? "text-green-600" : "text-zinc-600"
-                    }`}>{latestThesis.driftStatus}</p>
-                  </div>
-                </div>
-              )}
-            </div>
-          ) : (
-            <div className="rounded-xl border border-dashed border-zinc-200 bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900/50 px-5 py-8 text-center">
-              <p className="text-sm text-zinc-500">No thesis documented yet</p>
-              <p className="text-xs text-zinc-400 mt-1">Documenting a thesis adds up to 20 points to your conviction score</p>
-            </div>
-          )}
-        </section>
+        {/* Thesis */}
+        <ThesisEditor
+          watchlistItemId={itemId}
+          initialThesis={latestThesis ? {
+            id:             latestThesis.id,
+            version:        latestThesis.version,
+            bullCase:       latestThesis.bullCase ?? null,
+            bearCase:       latestThesis.bearCase ?? null,
+            keyAssumptions: latestThesis.keyAssumptions ?? null,
+            targetPrice:    latestThesis.targetPrice ?? null,
+            timeHorizon:    latestThesis.timeHorizon ?? null,
+            driftStatus:    latestThesis.driftStatus as "ON_TRACK" | "CONFIRMING" | "DIVERGING" | "BROKEN",
+            createdAt:      new Date(latestThesis.createdAt).toISOString(),
+          } : null}
+        />
       </main>
     </div>
   );
