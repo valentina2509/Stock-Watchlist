@@ -170,6 +170,22 @@ export const whyNowScores = sqliteTable("why_now_scores", {
   calculatedAt: integer("calculated_at", { mode: "timestamp" }).notNull(),
 });
 
+export const valuationScenarios = sqliteTable("valuation_scenarios", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  watchlistItemId: integer("watchlist_item_id")
+    .notNull()
+    .references(() => watchlistItems.id, { onDelete: "cascade" }),
+  method: text("method", { enum: ["DCF", "PE_MULTIPLE", "EV_EBITDA"] }).notNull(),
+  bearAssumptions: text("bear_assumptions").notNull(), // JSON
+  baseAssumptions: text("base_assumptions").notNull(),
+  bullAssumptions: text("bull_assumptions").notNull(),
+  bearPrice:    real("bear_price"),
+  basePrice:    real("base_price"),
+  bullPrice:    real("bull_price"),
+  currentPrice: real("current_price"),
+  calculatedAt: integer("calculated_at", { mode: "timestamp" }).notNull(),
+});
+
 // Relations for Drizzle relational query API
 export const stocksRelations = relations(stocks, ({ many }) => ({
   watchlistItems: many(watchlistItems),
@@ -184,6 +200,7 @@ export const watchlistItemsRelations = relations(watchlistItems, ({ one, many })
   theses: many(theses),
   alerts: many(alerts),
   researchNotes: many(researchNotes),
+  valuationScenarios: many(valuationScenarios),
 }));
 
 export const convictionScoresRelations = relations(convictionScores, ({ one }) => ({
@@ -212,4 +229,8 @@ export const researchNotesRelations = relations(researchNotes, ({ one }) => ({
 
 export const whyNowScoresRelations = relations(whyNowScores, ({ one }) => ({
   stock: one(stocks, { fields: [whyNowScores.stockId], references: [stocks.id] }),
+}));
+
+export const valuationScenariosRelations = relations(valuationScenarios, ({ one }) => ({
+  watchlistItem: one(watchlistItems, { fields: [valuationScenarios.watchlistItemId], references: [watchlistItems.id] }),
 }));

@@ -7,6 +7,7 @@ import { StateBadge } from "@/components/ConvictionBadge";
 import ScorePanel from "@/components/ScorePanel";
 import WhyNowPanel from "@/components/WhyNowPanel";
 import ThesisEditor from "@/components/ThesisEditor";
+import ValuationPanel from "@/components/ValuationPanel";
 import type { ConvictionBreakdown } from "@/lib/conviction-scorer";
 import type { WhyNowBreakdown, SignalResult } from "@/lib/why-now-engine";
 
@@ -142,6 +143,9 @@ export default async function StockDetailPage({ params }: Props) {
             </div>
           </section>
         )}
+
+        {/* Valuation scenarios */}
+        <ValuationPanel watchlistItemId={itemId} />
 
         {/* Thesis */}
         <ThesisEditor
