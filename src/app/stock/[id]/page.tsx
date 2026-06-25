@@ -1,11 +1,13 @@
 import { notFound } from "next/navigation";
 import Link from "next/link";
 import { db } from "@/db";
-import { watchlistItems, stocks, convictionScores, theses } from "@/db/schema";
+import { watchlistItems, stocks, convictionScores, theses, whyNowScores } from "@/db/schema";
 import { eq, desc } from "drizzle-orm";
 import { StateBadge } from "@/components/ConvictionBadge";
 import ScorePanel from "@/components/ScorePanel";
+import WhyNowPanel from "@/components/WhyNowPanel";
 import type { ConvictionBreakdown } from "@/lib/conviction-scorer";
+import type { WhyNowBreakdown, SignalResult } from "@/lib/why-now-engine";
 
 interface Props {
   params: { id: string };
@@ -28,7 +30,7 @@ export default async function StockDetailPage({ params }: Props) {
   });
   if (!item) notFound();
 
-  const [latestScore, latestThesis, scoreHistory] = await Promise.all([
+  const [latestScore, latestThesis, scoreHistory, latestWhyNowRow] = await Promise.all([
     db.query.convictionScores.findFirst({
       where: eq(convictionScores.watchlistItemId, itemId),
       orderBy: [desc(convictionScores.calculatedAt)],
@@ -41,7 +43,20 @@ export default async function StockDetailPage({ params }: Props) {
       where: eq(convictionScores.watchlistItemId, itemId),
       orderBy: [desc(convictionScores.calculatedAt)],
     }),
+    db.query.whyNowScores.findFirst({
+      where: eq(whyNowScores.stockId, item.stock.id),
+      orderBy: [desc(whyNowScores.calculatedAt)],
+    }),
   ]);
+
+  const latestWhyNow: WhyNowBreakdown | null = latestWhyNowRow
+    ? {
+        signals: (JSON.parse(latestWhyNowRow.breakdown) as { signals: SignalResult[] }).signals,
+        totalScore: latestWhyNowRow.totalScore,
+        isHotWindow: latestWhyNowRow.isHotWindow,
+        calculatedAt: new Date(latestWhyNowRow.calculatedAt).toISOString(),
+      }
+    : null;
 
   const stock = item.stock;
 
@@ -78,8 +93,11 @@ export default async function StockDetailPage({ params }: Props) {
           <StateBadge state={item.state} />
         </div>
 
-        {/* Score section */}
+        {/* Conviction score */}
         <ScorePanel watchlistItemId={itemId} initialBreakdown={null} />
+
+        {/* Why Now engine */}
+        <WhyNowPanel watchlistItemId={itemId} initialBreakdown={latestWhyNow} />
 
         {/* Score history */}
         {scoreHistory.length > 1 && (
